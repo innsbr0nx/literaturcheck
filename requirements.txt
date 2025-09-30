@@ -1,0 +1,5 @@
+streamlit
+fuzzywuzzy
+python-docx
+requests
+lxml
