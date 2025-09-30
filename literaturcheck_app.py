@@ -227,7 +227,8 @@ def überprüfe(einträge):
 # Streamlit UI
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
-     st.caption("Hinweis: Schnell zusammengebastelt mit böser KI und deshalb auch mit vielen Bugs...")
+    
+    st.caption("Hinweis: Schnell zusammengebastelt mit böser KI und deshalb auch mit vielen Bugs...")
 
     datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
 
