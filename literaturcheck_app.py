@@ -6,7 +6,7 @@ from docx import Document
 from lxml import etree
 import pandas as pd
 
-# 📁 Datei-Upload
+# Dateiupload
 def lade_datei(datei):
     if datei.name.endswith(".txt"):
         zeilen = [l.strip() for l in datei.getvalue().decode("utf-8").splitlines() if l.strip()]
@@ -18,7 +18,7 @@ def lade_datei(datei):
         return []
     return zeilen
 
-# 📄 Parsing der Literaturzeilen
+# Parsing der Literatureinträge
 def parse_einträge(zeilen):
     einträge = []
     for zeile in zeilen:
@@ -53,7 +53,7 @@ def parse_einträge(zeilen):
             continue
     return einträge
 
-# 🔎 DOI-Quellen
+# DOI-Quellen
 def get_metadata_crossref(doi):
     try:
         r = requests.get(f"https://api.crossref.org/works/{doi}")
@@ -113,7 +113,7 @@ def get_metadata_doi_rest(doi):
     except:
         return None
 
-# 📘 ISBN-Quellen
+# ISBN-Quellen
 def get_metadata_openlibrary(isbn):
     try:
         url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json"
@@ -162,7 +162,7 @@ def get_metadata_worldcat_sru(isbn):
     except:
         return None
 
-# 🧠 Vergleich
+# Vergleich
 def vergleiche(eintrag, metadata):
     if not metadata:
         return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False}
@@ -170,7 +170,7 @@ def vergleiche(eintrag, metadata):
     autor_match = any(eintrag["autor"].lower() in a.lower() for a in metadata.get("autoren", []))
     return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match}
 
-# ✅ Hauptlogik mit CSV-Export
+# Hauptlogik mit CSV-Export
 def überprüfe(einträge):
     alle_ergebnisse = []
 
@@ -187,7 +187,7 @@ def überprüfe(einträge):
             md = q(eintrag["id"])
             res = vergleiche(eintrag, md)
             ergebnisse.append(res)
-            st.write(f"{res['quelle']}: Titel-Similarität = {res['titel_score']}%, Autor gefunden: {'✅' if res['autor_match'] else '❌'}")
+            st.write(f"{res['quelle']}: Titel-Ähnlichkeit = {res['titel_score']}%, Autor:in gefunden: {'✅' if res['autor_match'] else '❌'}")
 
             alle_ergebnisse.append({
                 "Titel (Input)": eintrag["titel"],
@@ -195,8 +195,8 @@ def überprüfe(einträge):
                 "Typ": eintrag["typ"],
                 "ID": eintrag["id"],
                 "Quelle": res["quelle"],
-                "Titel-Similarität": res["titel_score"],
-                "Autor gefunden": "Ja" if res["autor_match"] else "Nein"
+                "Titel-Ähnlichkeit": res["titel_score"],
+                "Autor:in gefunden": "Ja" if res["autor_match"] else "Nein"
             })
 
         korrekt = [r for r in ergebnisse if r["titel_score"] >= 85 and r["autor_match"]]
@@ -227,8 +227,9 @@ def überprüfe(einträge):
 # Streamlit UI
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
+     st.caption("Hinweis: Schnell zusammengebastelt mit böser KI und deshalb auch mit vielen Bugs...")
 
-    datei = st.file_uploader("Lade Literaturdatei (.txt oder .docx) hoch", type=["txt", "docx"])
+    datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
 
     if datei:
         zeilen = lade_datei(datei)
@@ -237,7 +238,7 @@ def main():
             if einträge:
                 überprüfe(einträge)
             else:
-                st.warning("Keine gültigen Literatur-Einträge gefunden.")
+                st.warning("Keine gültigen Literatureinträge gefunden.")
         else:
             st.warning("Datei ist leer oder konnte nicht gelesen werden.")
 
