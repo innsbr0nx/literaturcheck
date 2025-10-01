@@ -1,148 +1,46 @@
 import streamlit as st
-import re
 import requests
-from fuzzywuzzy import fuzz
-from docx import Document
-from lxml import etree
+import re
 import pandas as pd
+from lxml import etree
+from fuzzywuzzy import fuzz
 
 # ---------------------------------------------------
-# Hilfsfunktionen zur Namensnormalisierung
+# Hilfsfunktionen
 # ---------------------------------------------------
 
 def normalize_author(name: str) -> str:
-    """Normalisiert Autor:innen-Namen ins Format 'Vorname Nachname'."""
+    """Normalisiert Autorennamen (Vorname Nachname)."""
+    if not name:
+        return ""
     name = name.strip()
-    if "," in name:
-        parts = [p.strip() for p in name.split(",", 1)]
-        if len(parts) == 2:
-            return f"{parts[1]} {parts[0]}".strip()
+    parts = re.split(r",\s*", name)
+    if len(parts) == 2:
+        return f"{parts[1]} {parts[0]}"
     return name
 
-# ---------------------------------------------------
-# Datei-Upload & Parsing
-# ---------------------------------------------------
 
-def lade_datei(datei):
-    if datei.name.endswith(".txt"):
-        zeilen = [l.strip() for l in datei.getvalue().decode("utf-8").splitlines() if l.strip()]
-    elif datei.name.endswith(".docx"):
-        doc = Document(datei)
-        zeilen = [para.text.strip() for para in doc.paragraphs if para.text.strip()]
-    else:
-        st.error("Nur .txt oder .docx werden unterstützt.")
-        return []
-    return zeilen
+def normalize_isbn(isbn: str) -> str:
+    """Normalisiert ISBN und konvertiert ISBN-10 nach ISBN-13."""
+    isbn = re.sub(r"[^0-9Xx]", "", isbn)
+    if len(isbn) == 10:
+        return isbn10_to_isbn13(isbn)
+    return isbn
 
 
-def parse_einträge(zeilen):
-    einträge = []
-    for zeile in zeilen:
-        try:
-            doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
-            isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
+def isbn10_to_isbn13(isbn10: str) -> str:
+    """Konvertiert ISBN-10 nach ISBN-13."""
+    prefix = "978" + isbn10[:-1]
+    total = 0
+    for i, digit in enumerate(prefix):
+        factor = 1 if i % 2 == 0 else 3
+        total += int(digit) * factor
+    check = (10 - (total % 10)) % 10
+    return prefix + str(check)
 
-            if doi_match:
-                identifier = doi_match.group(1).strip()
-                id_typ = "doi"
-            elif isbn_match:
-                identifier = isbn_match.group(1).replace("-", "").strip()
-                id_typ = "isbn"
-            else:
-                continue
-
-            # Autoren extrahieren (alles vor dem ersten Komma)
-            autor_roh = zeile.split(',')[0]
-            autor_roh = re.sub(r"\(Hrsg\.\)", "", autor_roh)
-            autor_roh = autor_roh.replace("et al.", "").replace("et al", "")
-
-            # Split nach "und" oder "u." oder "&"
-            autoren = re.split(r" und | u\. | & ", autor_roh)
-            autoren = [normalize_author(a) for a in autoren if a.strip()]
-
-            teile = zeile.split(',')
-            titel = teile[2].strip() if len(teile) >= 3 else "unbekannter Titel"
-
-            einträge.append({
-                'typ': id_typ,
-                'id': identifier,
-                'titel': titel,
-                'autor': autoren
-            })
-        except:
-            continue
-    return einträge
 
 # ---------------------------------------------------
-# DOI-Quellen
-# ---------------------------------------------------
-
-def get_metadata_crossref(doi):
-    try:
-        r = requests.get(f"https://api.crossref.org/works/{doi}")
-        if r.status_code != 200:
-            return None
-        data = r.json()["message"]
-        titel = data.get("title", [""])[0]
-        autoren = [normalize_author(f"{a.get('given','')} {a.get('family','')}".strip()) 
-                   for a in data.get("author", []) if "family" in a]
-        return {"quelle": "CrossRef", "titel": titel, "autoren": autoren}
-    except:
-        return None
-
-
-def get_metadata_opencitations(doi):
-    try:
-        r = requests.get(f"https://opencitations.net/index/api/v1/metadata/{doi}")
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        if not data or not isinstance(data, list):
-            return None
-        eintrag = data[0]
-        titel = eintrag.get("title", "")
-        autor_raw = eintrag.get("author", "")
-        autor = normalize_author(autor_raw)
-        return {"quelle": "OpenCitations", "titel": titel, "autoren": [autor]}
-    except:
-        return None
-
-
-def get_metadata_doaj(doi):
-    try:
-        url = f"https://doaj.org/api/v2/search/articles/doi:{doi.replace('/', '%2F')}"
-        r = requests.get(url)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        if "results" not in data or not data["results"]:
-            return None
-        artikel = data["results"][0]
-        bib = artikel.get("bibjson", {})
-        titel = bib.get("title", "")
-        autoren_liste = [normalize_author(a.get("name", "")) for a in bib.get("author", []) if a.get("name")]
-        return {"quelle": "DOAJ", "titel": titel, "autoren": autoren_liste}
-    except:
-        return None
-
-
-def get_metadata_doi_rest(doi):
-    try:
-        url = f"https://doi.org/{doi}"
-        headers = {"Accept": "application/citeproc+json"}
-        r = requests.get(url, headers=headers)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        titel = data.get("title", "")
-        autoren = [normalize_author(f"{a.get('given','')} {a.get('family','')}".strip()) 
-                   for a in data.get("author", [])] if "author" in data else []
-        return {"quelle": "DOI REST API", "titel": titel, "autoren": autoren}
-    except:
-        return None
-
-# ---------------------------------------------------
-# ISBN-Quellen
+# API-Abfragen ISBN
 # ---------------------------------------------------
 
 def get_metadata_openlibrary(isbn):
@@ -195,18 +93,145 @@ def get_metadata_worldcat_sru(isbn):
     except:
         return None
 
+
+def get_metadata_dnb(isbn):
+    try:
+        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        tree = etree.fromstring(r.content)
+        titel, autoren = None, []
+        for elem in tree.iter():
+            if elem.tag.endswith("245"):
+                for child in elem:
+                    if child.tag.endswith("a"):
+                        titel = child.text
+            if elem.tag.endswith("100") or elem.tag.endswith("700"):
+                for child in elem:
+                    if child.tag.endswith("a"):
+                        autoren.append(normalize_author(child.text))
+        return {"quelle": "DNB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_zdb(isbn):
+    try:
+        url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        tree = etree.fromstring(r.content)
+        titel, autoren = None, []
+        for elem in tree.iter():
+            if elem.tag.endswith("245"):
+                for child in elem:
+                    if child.tag.endswith("a"):
+                        titel = child.text
+            if elem.tag.endswith("100") or elem.tag.endswith("700"):
+                for child in elem:
+                    if child.tag.endswith("a"):
+                        autoren.append(normalize_author(child.text))
+        return {"quelle": "ZDB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+
+# ---------------------------------------------------
+# API-Abfragen DOI
+# ---------------------------------------------------
+
+def get_metadata_crossref(doi):
+    try:
+        r = requests.get(f"https://api.crossref.org/works/{doi}")
+        if r.status_code != 200:
+            return None
+        data = r.json()["message"]
+        titel = data.get("title", [""])[0]
+        autoren = [normalize_author(f"{a.get('given', '')} {a.get('family', '')}") for a in data.get("author", [])]
+        return {"quelle": "Crossref", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_opencitations(doi):
+    try:
+        r = requests.get(f"https://opencitations.net/index/api/v1/metadata/{doi}")
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if not data or not isinstance(data, list):
+            return None
+        eintrag = data[0]
+        titel = eintrag.get("title", "")
+        autor_raw = eintrag.get("author", "")
+        autoren = [normalize_author(autor_raw)]
+        return {"quelle": "OpenCitations", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_doaj(doi):
+    try:
+        url = f"https://doaj.org/api/v2/search/articles/doi:{doi.replace('/', '%2F')}"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if "results" not in data or not data["results"]:
+            return None
+        artikel = data["results"][0]
+        bib = artikel.get("bibjson", {})
+        titel = bib.get("title", "")
+        autoren_liste = [normalize_author(a.get("name", "")) for a in bib.get("author", []) if a.get("name")]
+        return {"quelle": "DOAJ", "titel": titel, "autoren": autoren_liste}
+    except:
+        return None
+
+
+def get_metadata_datacite(doi):
+    try:
+        url = f"https://api.datacite.org/works/{doi}"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        data = r.json().get("data", {}).get("attributes", {})
+        titel = data.get("title", [""])[0] if isinstance(data.get("title"), list) else data.get("title", "")
+        autoren = []
+        for a in data.get("author", []):
+            autoren.append(normalize_author(f"{a.get('given', '')} {a.get('family', '')}"))
+        return {"quelle": "DataCite", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_doi_rest(doi):
+    try:
+        url = f"https://doi.org/{doi}"
+        headers = {"Accept": "application/citeproc+json"}
+        r = requests.get(url, headers=headers)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        titel = data.get("title", "")
+        autoren = [normalize_author(f"{a.get('given', '')} {a.get('family', '')}") for a in data.get("author", [])]
+        return {"quelle": "DOI REST", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
 # ---------------------------------------------------
 # Vergleich
 # ---------------------------------------------------
 
 def vergleiche(eintrag, metadata):
-    """Vergleicht den eingelesenen Eintrag mit API-Metadaten."""
     if not metadata:
         return {
             "quelle": "unbekannt",
             "titel_score": 0,
             "autor_match": False,
-            "autoren_input": eintrag["autor"],
+            "autoren_input": eintrag["autor"] if isinstance(eintrag["autor"], list) else [eintrag["autor"]],
             "autoren_api": []
         }
 
@@ -216,11 +241,15 @@ def vergleiche(eintrag, metadata):
     )
 
     autoren_input = eintrag["autor"]
+    if isinstance(autoren_input, str):
+        autoren_input = [autoren_input]
     autoren_api = metadata.get("autoren", [])
 
     autor_match = False
     for a_in in autoren_input:
         for a_api in autoren_api:
+            if not a_in or not a_api:
+                continue
             score = fuzz.partial_ratio(a_in.lower(), a_api.lower())
             if score >= 80:
                 autor_match = True
@@ -236,73 +265,75 @@ def vergleiche(eintrag, metadata):
         "autoren_api": autoren_api
     }
 
+
 # ---------------------------------------------------
-# Hauptlogik
+# Darstellung
 # ---------------------------------------------------
+
+def highlight_rows(row):
+    if row["Titel-Ähnlichkeit (%)"] >= 85 and row["Autor:in gefunden"] == "Ja":
+        return ['background-color: #c8e6c9'] * len(row)  # grün
+    elif row["Titel-Ähnlichkeit (%)"] >= 70 or row["Autor:in gefunden"] == "Ja":
+        return ['background-color: #fff9c4'] * len(row)  # gelb
+    else:
+        return ['background-color: #ffcdd2'] * len(row)  # rot
+
 
 def überprüfe(einträge):
-    alle_ergebnisse = []
+    ergebnisse = []
 
     for eintrag in einträge:
-        st.markdown(f"### 🔍 {eintrag['titel']} ({', '.join(eintrag['autor'])})")
-        ergebnisse = []
-
-        if eintrag["typ"] == "doi":
-            quellen = [get_metadata_crossref, get_metadata_opencitations, get_metadata_doaj, get_metadata_doi_rest]
+        if eintrag["typ"] == "isbn":
+            isbn_norm = normalize_isbn(eintrag["id"])
+            eintrag["id"] = isbn_norm
+            quellen = [get_metadata_openlibrary, get_metadata_googlebooks, get_metadata_worldcat_sru, get_metadata_dnb, get_metadata_zdb]
         else:
-            quellen = [get_metadata_openlibrary, get_metadata_googlebooks, get_metadata_worldcat_sru]
+            quellen = [get_metadata_crossref, get_metadata_opencitations, get_metadata_doaj, get_metadata_datacite, get_metadata_doi_rest]
 
+        res_list = []
         for q in quellen:
             md = q(eintrag["id"])
-            res = vergleiche(eintrag, md)
-            ergebnisse.append(res)
-            st.write(f"{res['quelle']}: Titel-Ähnlichkeit = {res['titel_score']}%, "
-                     f"Autor:in gefunden: {'✅' if res['autor_match'] else '❌'}")
+            res_list.append(vergleiche(eintrag, md))
 
-            alle_ergebnisse.append({
-                "Titel (Input)": eintrag["titel"],
-                "Autor:innen (Input)": ", ".join(res["autoren_input"]),
-                "Typ": eintrag["typ"],
-                "ID": eintrag["id"],
-                "Quelle": res["quelle"],
-                "Titel-Ähnlichkeit": res["titel_score"],
-                "Autor:in gefunden": "Ja" if res["autor_match"] else "Nein",
-                "Autor:innen (API)": ", ".join(res["autoren_api"])
+        if res_list:
+            best = max(res_list, key=lambda r: r["titel_score"])
+            ergebnisse.append({
+                "Titel (Eingabe)": eintrag["titel"],
+                "Autor:innen (Eingabe)": ", ".join(eintrag["autor"]) if isinstance(eintrag["autor"], list) else eintrag["autor"],
+                "Quelle": best["quelle"],
+                "Titel-Ähnlichkeit (%)": best["titel_score"],
+                "Autor:in gefunden": "Ja" if best["autor_match"] else "Nein",
+                "Autor:innen (API)": ", ".join(best["autoren_api"])
             })
 
-    # Gesamttabelle anzeigen
-    if alle_ergebnisse:
-        df = pd.DataFrame(alle_ergebnisse)
-        st.dataframe(df, use_container_width=True)
+    if ergebnisse:
+        df = pd.DataFrame(ergebnisse)
+        styled = df.style.apply(highlight_rows, axis=1)
+        st.dataframe(styled, use_container_width=True)
+    else:
+        st.warning("Keine Ergebnisse gefunden.")
 
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Ergebnisse als CSV herunterladen",
-            data=csv,
-            file_name='literaturcheck_ergebnisse.csv',
-            mime='text/csv'
-        )
 
 # ---------------------------------------------------
 # Streamlit UI
 # ---------------------------------------------------
 
 def main():
-    st.title("📚 Litcheck Historia.Scribere ALPHA")
-    st.caption("Automatischer DOI/ISBN-Abgleich – experimentell")
+    st.title("📚 Litcheck – Literatur-Validierung")
 
-    datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
+    st.write("Lade eine Literaturliste hoch (TXT oder DOCX).")
 
-    if datei:
-        zeilen = lade_datei(datei)
-        if zeilen:
-            einträge = parse_einträge(zeilen)
-            if einträge:
-                überprüfe(einträge)
-            else:
-                st.warning("Keine gültigen Literatureinträge gefunden.")
-        else:
-            st.warning("Datei ist leer oder konnte nicht gelesen werden.")
+    uploaded_file = st.file_uploader("Datei auswählen", type=["txt", "docx"])
+    if uploaded_file:
+        # Dummy-Testeinträge
+        einträge = [
+            {"typ": "isbn", "id": "978-3-7065-5939-3", "titel": "Nationalsozialistische Kulturpolitik in Tirol und Vorarlberg", "autor": ["Nikolaus Hagen"]},
+            {"typ": "isbn", "id": "978-3910740457", "titel": "Taiwan, China und die USA", "autor": ["Rolf Steininger"]},
+            {"typ": "doi", "id": "10.15203/99106-015-4", "titel": "Antisemitismus in der Migrationsgesellschaft. Theoretische Überlegungen, Empirische Fallbeispiele, Pädagogische Praxis", "autor": ["Tobias Neuburger", "Nikolaus Hagen"]},
+            {"typ": "doi", "id": "10.1515/9783111186016", "titel": "Return and Circular Migration in Contemporary European History", "autor": ["Sarah Oberbichler"]}
+        ]
+        überprüfe(einträge)
+
 
 if __name__ == "__main__":
     main()
