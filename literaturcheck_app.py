@@ -193,7 +193,7 @@ def vergleiche(eintrag, metadata):
     return {"titel_score": titel_score, "autor_match": autor_match}
 
 # ======================
-# Hauptlogik – nur 1 Ergebnis pro Titel
+# Hauptlogik – 1 Ergebnis pro Titel mit bester Quelle
 # ======================
 def überprüfe(einträge):
     gesamt_ergebnisse = []
@@ -231,7 +231,7 @@ def überprüfe(einträge):
         else:
             status = "❌ Keine Übereinstimmung"
 
-        # Beste Quelle auswählen (höchster Titel-Score, dann Autor-Match bevorzugt)
+        # Beste Quelle auswählen
         beste_quelle = None
         if res_liste:
             res_liste.sort(key=lambda r: (r["titel_score"], r["autor_match"]), reverse=True)
@@ -244,6 +244,8 @@ def überprüfe(einträge):
             "ID": eintrag["id"],
             "Status": status,
             "Beste Quelle": beste_quelle["quelle"] if beste_quelle else "-",
+            "Titel-Ähnlichkeit (%)": beste_quelle["titel_score"] if beste_quelle else 0,
+            "Autor:innen gefunden": "Ja" if beste_quelle and beste_quelle["autor_match"] else "Nein",
             "Titel (API)": beste_quelle["titel_api"] if beste_quelle else "-",
             "Autor:innen (API)": ", ".join(beste_quelle["autoren_api"]) if beste_quelle and isinstance(beste_quelle["autoren_api"], list) else (beste_quelle["autoren_api"] if beste_quelle else "-")
         })
@@ -272,13 +274,12 @@ def überprüfe(einträge):
             mime='text/csv'
         )
 
-
 # ======================
 # Streamlit UI
 # ======================
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
-    st.caption("Hinweis: Ein zusammengebastelter KI-Prototyp – Ergebnisse mit Vorsicht verwenden.")
+    st.caption("Hinweis: KI-Prototyp – Ergebnisse mit Vorsicht verwenden.")
 
     datei = st.file_uploader("📂 Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
 
