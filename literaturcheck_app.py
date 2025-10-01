@@ -6,7 +6,9 @@ from docx import Document
 from lxml import etree
 import pandas as pd
 
-# Dateiupload
+# ======================
+# Datei-Upload
+# ======================
 def lade_datei(datei):
     if datei.name.endswith(".txt"):
         zeilen = [l.strip() for l in datei.getvalue().decode("utf-8").splitlines() if l.strip()]
@@ -18,7 +20,9 @@ def lade_datei(datei):
         return []
     return zeilen
 
-# Parsing der Literatureinträge
+# ======================
+# Parsing der Einträge
+# ======================
 def parse_einträge(zeilen):
     einträge = []
     for zeile in zeilen:
@@ -53,7 +57,9 @@ def parse_einträge(zeilen):
             continue
     return einträge
 
+# ======================
 # DOI-Quellen
+# ======================
 def get_metadata_crossref(doi):
     try:
         r = requests.get(f"https://api.crossref.org/works/{doi}")
@@ -113,7 +119,12 @@ def get_metadata_doi_rest(doi):
     except:
         return None
 
+# ======================
 # ISBN-Quellen
+# ======================
+def normalize_isbn(isbn):
+    return isbn.replace("-", "").strip()
+
 def get_metadata_openlibrary(isbn):
     try:
         url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json"
@@ -162,75 +173,140 @@ def get_metadata_worldcat_sru(isbn):
     except:
         return None
 
+def get_metadata_from_all_sources(isbn):
+    isbn = normalize_isbn(isbn)
+    results = []
+
+    openlib_data = get_metadata_openlibrary(isbn)
+    if openlib_data:
+        results.append(openlib_data)
+
+    google_data = get_metadata_googlebooks(isbn)
+    if google_data:
+        results.append(google_data)
+
+    worldcat_data = get_metadata_worldcat_sru(isbn)
+    if worldcat_data:
+        results.append(worldcat_data)
+
+    if not results:
+        return None
+
+    priority_order = ["Google Books", "WorldCat", "OpenLibrary"]
+    results.sort(key=lambda x: priority_order.index(x["quelle"]) if x["quelle"] in priority_order else 99)
+
+    best = results[0].copy()
+    for res in results[1:]:
+        if not best.get("titel") and res.get("titel"):
+            best["titel"] = res["titel"]
+        if not best.get("autoren") and res.get("autoren"):
+            best["autoren"] = res["autoren"]
+
+    best["quellen"] = [res["quelle"] for res in results]
+    return best
+
+# ======================
 # Vergleich
+# ======================
 def vergleiche(eintrag, metadata):
     if not metadata:
-        return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False}
+        return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False,
+                "titel_api": "", "autoren_api": ""}
     titel_score = fuzz.token_sort_ratio(eintrag["titel"].lower(), metadata["titel"].lower())
     autor_match = any(eintrag["autor"].lower() in a.lower() for a in metadata.get("autoren", []))
-    return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match}
+    return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match,
+            "titel_api": metadata.get("titel", ""), "autoren_api": metadata.get("autoren", [])}
 
-# Hauptlogik mit CSV-Export
+# ======================
+# Hauptlogik mit Tabelle & Filter
+# ======================
 def überprüfe(einträge):
     alle_ergebnisse = []
 
     for eintrag in einträge:
-        st.markdown(f"### 🔍 {eintrag['titel']} ({eintrag['autor']})")
-        ergebnisse = []
-
         if eintrag["typ"] == "doi":
             quellen = [get_metadata_crossref, get_metadata_opencitations, get_metadata_doaj, get_metadata_doi_rest]
-        else:
-            quellen = [get_metadata_openlibrary, get_metadata_googlebooks, get_metadata_worldcat_sru]
-
-        for q in quellen:
-            md = q(eintrag["id"])
+            ergebnisse = []
+            for q in quellen:
+                md = q(eintrag["id"])
+                res = vergleiche(eintrag, md)
+                ergebnisse.append(res)
+        else:  # ISBN
+            md = get_metadata_from_all_sources(eintrag["id"])
             res = vergleiche(eintrag, md)
-            ergebnisse.append(res)
-            st.write(f"{res['quelle']}: Titel-Ähnlichkeit = {res['titel_score']}%, Autor:in gefunden: {'✅' if res['autor_match'] else '❌'}")
+            ergebnisse = [res]
+
+        for res in ergebnisse:
+            if res["titel_score"] >= 85 and res["autor_match"]:
+                status = "✅ Übereinstimmung"
+            elif res["titel_score"] >= 85:
+                status = "⚠️ Titel ok, Autor fehlt"
+            elif res["autor_match"]:
+                status = "⚠️ Autor ok, Titel abweichend"
+            else:
+                status = "❌ Keine Übereinstimmung"
 
             alle_ergebnisse.append({
                 "Titel (Input)": eintrag["titel"],
                 "Autor (Input)": eintrag["autor"],
-                "Typ": eintrag["typ"],
+                "Typ": eintrag["typ"].upper(),
                 "ID": eintrag["id"],
                 "Quelle": res["quelle"],
                 "Titel-Ähnlichkeit": res["titel_score"],
-                "Autor:in gefunden": "Ja" if res["autor_match"] else "Nein"
+                "Autor:in gefunden": "Ja" if res["autor_match"] else "Nein",
+                "Titel (API)": res.get("titel_api", ""),
+                "Autor:innen (API)": ", ".join(res.get("autoren_api", [])) if isinstance(res.get("autoren_api", list)) else res.get("autoren_api", ""),
+                "Status": status
             })
 
-        korrekt = [r for r in ergebnisse if r["titel_score"] >= 85 and r["autor_match"]]
-        nur_titel = [r for r in ergebnisse if r["titel_score"] >= 85 and not r["autor_match"]]
-        nur_aut = [r for r in ergebnisse if r["titel_score"] < 85 and r["autor_match"]]
-
-        st.markdown("**🧾 Zusammenfassung:**")
-        if korrekt:
-            st.success("✅ Korrekte Zitation erkannt (Titel + Autor bestätigt)")
-        elif nur_titel:
-            st.warning("⚠️ Titel stimmt überein, aber Autor wurde nicht bestätigt")
-        elif nur_aut:
-            st.warning("⚠️ Autor erkannt, aber Titel weicht stark ab")
-        else:
-            st.error("❌ Keine Übereinstimmung in den geprüften Datenbanken")
-
-    # CSV-Download Button
     if alle_ergebnisse:
         df = pd.DataFrame(alle_ergebnisse)
-        csv = df.to_csv(index=False).encode('utf-8')
+
+        # --- Filter-Menü ---
+        st.sidebar.markdown("## 🔎 Filter")
+        typ_filter = st.sidebar.multiselect(
+            "Filter nach Typ",
+            options=df["Typ"].unique(),
+            default=df["Typ"].unique()
+        )
+        status_filter = st.sidebar.multiselect(
+            "Filter nach Status",
+            options=df["Status"].unique(),
+            default=df["Status"].unique()
+        )
+
+        df_filtered = df[df["Typ"].isin(typ_filter) & df["Status"].isin(status_filter)]
+
+        # --- Farbiges Highlighting ---
+        def highlight_status(val):
+            if val.startswith("✅"):
+                return 'background-color: #d4edda; color: black;'
+            elif val.startswith("⚠️"):
+                return 'background-color: #fff3cd; color: black;'
+            elif val.startswith("❌"):
+                return 'background-color: #f8d7da; color: black;'
+            return ''
+
+        st.markdown("### Ergebnisse")
+        st.dataframe(df_filtered.style.applymap(highlight_status, subset=["Status"]), use_container_width=True)
+
+        # --- CSV-Export ---
+        csv = df_filtered.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Ergebnisse als CSV herunterladen",
+            label="📥 Gefilterte Ergebnisse als CSV herunterladen",
             data=csv,
             file_name='literaturcheck_ergebnisse.csv',
             mime='text/csv'
         )
 
+# ======================
 # Streamlit UI
+# ======================
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
-    
-    st.caption("Hinweis: Schnell zusammengebastelt mit böser KI und deshalb auch mit vielen Bugs...")
+    st.caption("Hinweis: KI-Prototyp – Ergebnisse mit Vorsicht verwenden.")
 
-    datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
+    datei = st.file_uploader("📂 Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
 
     if datei:
         zeilen = lade_datei(datei)
