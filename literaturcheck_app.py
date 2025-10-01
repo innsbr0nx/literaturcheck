@@ -175,79 +175,112 @@ def get_metadata_worldcat_sru(isbn):
 # DNB & ZDB SRU-Schnittstellen
 # ===============================
 
-def get_metadata_dnb(isbn=None, titel=None):
+# ===============================
+# DNB & ZDB robuste Abfragen
+# ===============================
+
+def parse_marcxml_records(xml_content, quelle):
+    """Parst MARCXML von DNB/ZDB und extrahiert Titel & Autoren."""
     try:
-        if isbn:
-            query = f"num={isbn}"
-        elif titel:
-            query = f"pica.tit={titel}"
-        else:
-            return None
-
-        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&query={query}&maximumRecords=1"
-        headers = {"Accept": "application/xml"}
-        r = requests.get(url, headers=headers, timeout=8)
-        if r.status_code != 200:
-            return None
-
-        tree = etree.fromstring(r.content)
+        tree = etree.fromstring(xml_content)
         ns = {"marc": "http://www.loc.gov/MARC21/slim"}
+        records = []
 
-        record = tree.find(".//marc:record", ns)
-        if record is None:
-            return None
+        for record in tree.findall(".//marc:record", ns):
+            titel = ""
+            autoren = []
 
-        titel_parts, autoren = [], []
+            for df in record.findall("marc:datafield", ns):
+                tag = df.attrib.get("tag")
+                if tag == "245":  # Titel
+                    sub_a = df.find("marc:subfield[@code='a']", ns)
+                    if sub_a is not None:
+                        titel = sub_a.text or ""
+                if tag in ["100", "700"]:  # Autoren
+                    sub_a = df.find("marc:subfield[@code='a']", ns)
+                    if sub_a is not None:
+                        autoren.append(sub_a.text or "")
 
-        for df in record.findall("marc:datafield", ns):
-            tag = df.attrib.get("tag")
+            if titel:
+                records.append({"quelle": quelle, "titel": titel, "autoren": autoren})
 
-            if tag == "245":  # Titel
-                for sf in df.findall("marc:subfield", ns):
-                    if sf.attrib.get("code") in ["a", "b"]:
-                        titel_parts.append(sf.text.strip() if sf.text else "")
-
-            if tag in ["100", "700"]:  # Autor/en
-                for sf in df.findall("marc:subfield", ns):
-                    if sf.attrib.get("code") == "a" and sf.text:
-                        autoren.append(sf.text.strip())
-
-        titel = " ".join(titel_parts).strip(" /:")
-        return {"quelle": "DNB", "titel": titel, "autoren": autoren}
-
+        return records
     except Exception as e:
+        return []
+
+
+def query_dnb(isbn=None, titel=None):
+    """Fragt die DNB per SRU ab – zuerst ISBN, dann Titel."""
+    base = "https://services.dnb.de/sru/dnb"
+    params = {"version": "1.1", "operation": "searchRetrieve", "maximumRecords": "5", "recordSchema": "MARC21-xml"}
+
+    # Erst ISBN
+    if isbn:
+        params["query"] = f"pica.isb={isbn}"
+        try:
+            r = requests.get(base, params=params, timeout=10)
+            recs = parse_marcxml_records(r.content, "DNB")
+            if recs:
+                return recs
+        except:
+            pass
+
+    # Fallback: Titel
+    if titel:
+        params["query"] = f"pica.tit={titel}"
+        try:
+            r = requests.get(base, params=params, timeout=10)
+            return parse_marcxml_records(r.content, "DNB")
+        except:
+            return []
+    return []
+
+
+def query_zdb(isbn=None, titel=None):
+    """Fragt die ZDB per SRU ab – zuerst ISBN, dann Titel."""
+    base = "https://services.dnb.de/sru/zdb"
+    params = {"version": "1.1", "operation": "searchRetrieve", "maximumRecords": "5", "recordSchema": "MARC21-xml"}
+
+    if isbn:
+        params["query"] = f"pica.isb={isbn}"
+        try:
+            r = requests.get(base, params=params, timeout=10)
+            recs = parse_marcxml_records(r.content, "ZDB")
+            if recs:
+                return recs
+        except:
+            pass
+
+    if titel:
+        params["query"] = f"pica.tit={titel}"
+        try:
+            r = requests.get(base, params=params, timeout=10)
+            return parse_marcxml_records(r.content, "ZDB")
+        except:
+            return []
+    return []
+
+
+# ===============================
+# Wrapper für Metadaten-Abfragen
+# ===============================
+
+def get_metadata_dnb(eintrag):
+    recs = query_dnb(isbn=eintrag["id"] if eintrag["typ"]=="isbn" else None,
+                     titel=eintrag["titel"])
+    if not recs:
         return None
+    # besten Treffer wählen
+    best = max(recs, key=lambda r: fuzz.token_sort_ratio(eintrag["titel"].lower(), r["titel"].lower()))
+    return best
 
-
-def get_metadata_zdb(isbn=None, titel=None):
-    try:
-        if isbn:
-            query = f"num={isbn}"
-        elif titel:
-            query = f"tit={titel}"
-        else:
-            return None
-        url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query={query}&maximumRecords=1"
-        headers = {"Accept": "application/xml"}
-        r = requests.get(url, headers=headers, timeout=8)
-        if r.status_code != 200:
-            return None
-
-        tree = etree.fromstring(r.content)
-        ns = {"srw": "http://www.loc.gov/zing/srw/"}
-        record = tree.find(".//srw:record", ns)
-        if record is None:
-            return None
-
-        titel, autoren = None, []
-        for elem in record.iter():
-            if elem.tag.endswith("title") and not titel:
-                titel = elem.text
-            if elem.tag.endswith("creator"):
-                autoren.append(elem.text)
-        return {"quelle": "ZDB", "titel": titel or "", "autoren": autoren}
-    except:
+def get_metadata_zdb(eintrag):
+    recs = query_zdb(isbn=eintrag["id"] if eintrag["typ"]=="isbn" else None,
+                     titel=eintrag["titel"])
+    if not recs:
         return None
+    best = max(recs, key=lambda r: fuzz.token_sort_ratio(eintrag["titel"].lower(), r["titel"].lower()))
+    return best
 
 
 # ===============================
@@ -332,13 +365,24 @@ def highlight_rows(row):
 
 def überprüfe(einträge, langsame_quellen=False):
     beste_ergebnisse = []
+
     for eintrag in einträge:
         st.markdown(f"### 🔍 {eintrag['titel']} ({eintrag['autor']})")
+
         if eintrag["typ"] == "doi":
             quellen = [get_metadata_crossref, get_metadata_doi_rest]
         else:
-            quellen = []  # ISBN läuft über query_isbn_sources
+            quellen = [get_metadata_googlebooks, get_metadata_openlibrary]
+            if langsame_quellen:
+                quellen += [
+                    get_metadata_worldcat_sru,
+                    lambda x: get_metadata_dnb(x),
+                    lambda x: get_metadata_zdb(x)
+                ]
+
+        # Metadaten holen
         res_list = fetch_all_metadata(eintrag, quellen)
+
         if res_list:
             best = max(res_list, key=lambda r: r["titel_score"])
             beste_ergebnisse.append({
@@ -365,6 +409,7 @@ def überprüfe(einträge, langsame_quellen=False):
         df = pd.DataFrame(beste_ergebnisse)
         styled = df.style.apply(highlight_rows, axis=1)
         st.dataframe(styled, use_container_width=True)
+
 
 
 # ===============================
