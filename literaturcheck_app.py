@@ -5,13 +5,13 @@ import pandas as pd
 from lxml import etree
 from fuzzywuzzy import fuzz
 from docx import Document
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ---------------------------------------------------
 # Hilfsfunktionen
 # ---------------------------------------------------
 
 def normalize_author(name: str) -> str:
-    """Normalisiert Autorennamen (Vorname Nachname)."""
     if not name:
         return ""
     name = name.strip()
@@ -22,7 +22,6 @@ def normalize_author(name: str) -> str:
 
 
 def normalize_isbn(isbn: str) -> str:
-    """Normalisiert ISBN und konvertiert ISBN-10 nach ISBN-13."""
     isbn = re.sub(r"[^0-9Xx]", "", isbn)
     if len(isbn) == 10:
         return isbn10_to_isbn13(isbn)
@@ -30,7 +29,6 @@ def normalize_isbn(isbn: str) -> str:
 
 
 def isbn10_to_isbn13(isbn10: str) -> str:
-    """Konvertiert ISBN-10 nach ISBN-13."""
     prefix = "978" + isbn10[:-1]
     total = 0
     for i, digit in enumerate(prefix):
@@ -73,12 +71,17 @@ def parse_einträge(text: str):
 
 
 # ---------------------------------------------------
-# DOI-APIs
+# API-Quellen (alle mit Timeout)
 # ---------------------------------------------------
 
+def safe_get(url, headers=None):
+    return requests.get(url, headers=headers, timeout=8)
+
+
+# DOI-Quellen
 def get_metadata_crossref(doi):
     try:
-        r = requests.get(f"https://api.crossref.org/works/{doi}")
+        r = safe_get(f"https://api.crossref.org/works/{doi}")
         if r.status_code != 200:
             return None
         data = r.json()["message"]
@@ -88,10 +91,9 @@ def get_metadata_crossref(doi):
     except:
         return None
 
-
 def get_metadata_opencitations(doi):
     try:
-        r = requests.get(f"https://opencitations.net/index/api/v1/metadata/{doi}")
+        r = safe_get(f"https://opencitations.net/index/api/v1/metadata/{doi}")
         if r.status_code != 200:
             return None
         data = r.json()
@@ -105,13 +107,10 @@ def get_metadata_opencitations(doi):
     except:
         return None
 
-
 def get_metadata_doaj(doi):
     try:
         url = f"https://doaj.org/api/v2/search/articles/doi:{doi.replace('/', '%2F')}"
-        r = requests.get(url)
-        if r.status_code != 200:
-            return None
+        r = safe_get(url)
         data = r.json()
         if "results" not in data or not data["results"]:
             return None
@@ -123,11 +122,9 @@ def get_metadata_doaj(doi):
     except:
         return None
 
-
 def get_metadata_datacite(doi):
     try:
-        url = f"https://api.datacite.org/works/{doi}"
-        r = requests.get(url)
+        r = safe_get(f"https://api.datacite.org/works/{doi}")
         if r.status_code != 200:
             return None
         data = r.json().get("data", {}).get("attributes", {})
@@ -137,12 +134,11 @@ def get_metadata_datacite(doi):
     except:
         return None
 
-
 def get_metadata_doi_rest(doi):
     try:
         url = f"https://doi.org/{doi}"
         headers = {"Accept": "application/citeproc+json"}
-        r = requests.get(url, headers=headers)
+        r = safe_get(url, headers=headers)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -153,14 +149,10 @@ def get_metadata_doi_rest(doi):
         return None
 
 
-# ---------------------------------------------------
-# ISBN-APIs
-# ---------------------------------------------------
-
+# ISBN-Quellen
 def get_metadata_openlibrary(isbn):
     try:
-        url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json"
-        r = requests.get(url)
+        r = safe_get(f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json")
         data = r.json().get(f"ISBN:{isbn}")
         if not data:
             return None
@@ -170,11 +162,9 @@ def get_metadata_openlibrary(isbn):
     except:
         return None
 
-
 def get_metadata_googlebooks(isbn):
     try:
-        url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
-        r = requests.get(url)
+        r = safe_get(f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}")
         data = r.json()
         if 'items' not in data:
             return None
@@ -185,19 +175,15 @@ def get_metadata_googlebooks(isbn):
     except:
         return None
 
-
 def get_metadata_worldcat_sru(isbn):
     try:
         url = f"https://worldcat.org/webservices/catalog/search/sru?version=1.2&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
-        headers = {'Accept': 'application/xml'}
-        r = requests.get(url, headers=headers)
+        r = safe_get(url, headers={'Accept': 'application/xml'})
         tree = etree.fromstring(r.content)
-        ns = {'srw': 'http://www.loc.gov/zing/srw/'}
-        records = tree.findall('.//srw:record', ns)
+        records = tree.findall('.//{http://www.loc.gov/zing/srw/}record')
         if not records:
             return None
-        titel = None
-        autoren = []
+        titel, autoren = None, []
         for elem in records[0].iter():
             if elem.tag.endswith('title') and not titel:
                 titel = elem.text
@@ -207,16 +193,12 @@ def get_metadata_worldcat_sru(isbn):
     except:
         return None
 
-
 def get_metadata_dnb(isbn):
     try:
         url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
-        r = requests.get(url)
-        if r.status_code != 200:
-            return None
+        r = safe_get(url)
         tree = etree.fromstring(r.content)
-        titel = None
-        autoren = []
+        titel, autoren = None, []
         for elem in tree.iter():
             if elem.tag.endswith("title") and not titel:
                 titel = elem.text
@@ -226,16 +208,12 @@ def get_metadata_dnb(isbn):
     except:
         return None
 
-
 def get_metadata_zdb(isbn):
     try:
         url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
-        r = requests.get(url)
-        if r.status_code != 200:
-            return None
+        r = safe_get(url)
         tree = etree.fromstring(r.content)
-        titel = None
-        autoren = []
+        titel, autoren = None, []
         for elem in tree.iter():
             if elem.tag.endswith("title") and not titel:
                 titel = elem.text
@@ -247,18 +225,14 @@ def get_metadata_zdb(isbn):
 
 
 # ---------------------------------------------------
-# Vergleich
+# Vergleich & Verarbeitung
 # ---------------------------------------------------
 
 def vergleiche(eintrag, metadata):
     if not metadata:
         return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False, "autoren_api": []}
 
-    titel_score = fuzz.token_sort_ratio(
-        str(eintrag["titel"]).lower(),
-        str(metadata.get("titel", "")).lower()
-    )
-
+    titel_score = fuzz.token_sort_ratio(str(eintrag["titel"]).lower(), str(metadata.get("titel", "")).lower())
     autoren_input = eintrag["autor"]
     if isinstance(autoren_input, str):
         autoren_input = [autoren_input]
@@ -276,12 +250,20 @@ def vergleiche(eintrag, metadata):
         if autor_match:
             break
 
-    return {
-        "quelle": metadata["quelle"],
-        "titel_score": titel_score,
-        "autor_match": autor_match,
-        "autoren_api": autoren_api
-    }
+    return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match, "autoren_api": autoren_api}
+
+
+def fetch_all_metadata(eintrag, quellen):
+    results = []
+    with ThreadPoolExecutor(max_workers=len(quellen)) as executor:
+        future_to_source = {executor.submit(q, eintrag["id"]): q for q in quellen}
+        for future in as_completed(future_to_source):
+            try:
+                md = future.result(timeout=10)
+                results.append(vergleiche(eintrag, md))
+            except Exception:
+                continue
+    return results
 
 
 def highlight_rows(row):
@@ -293,24 +275,20 @@ def highlight_rows(row):
         return ['background-color: #ffcdd2'] * len(row)
 
 
-def überprüfe(einträge):
+def überprüfe(einträge, include_dnb_zdb=False):
     ergebnisse = []
-
     for eintrag in einträge:
         if eintrag["typ"] == "isbn":
             isbn_norm = normalize_isbn(eintrag["id"])
             eintrag["id"] = isbn_norm
-            quellen = [get_metadata_openlibrary, get_metadata_googlebooks,
-                       get_metadata_worldcat_sru, get_metadata_dnb, get_metadata_zdb]
+            quellen = [get_metadata_openlibrary, get_metadata_googlebooks, get_metadata_worldcat_sru]
+            if include_dnb_zdb:
+                quellen.extend([get_metadata_dnb, get_metadata_zdb])
         else:
-            quellen = [get_metadata_crossref, get_metadata_opencitations,
-                       get_metadata_doaj, get_metadata_datacite, get_metadata_doi_rest]
+            quellen = [get_metadata_crossref, get_metadata_opencitations, get_metadata_doaj,
+                       get_metadata_datacite, get_metadata_doi_rest]
 
-        res_list = []
-        for q in quellen:
-            md = q(eintrag["id"])
-            res_list.append(vergleiche(eintrag, md))
-
+        res_list = fetch_all_metadata(eintrag, quellen)
         if res_list:
             best = max(res_list, key=lambda r: r["titel_score"])
             ergebnisse.append({
@@ -336,6 +314,7 @@ def überprüfe(einträge):
 
 def main():
     st.title("📚 Litcheck – Literatur-Validierung")
+    include_dnb_zdb = st.checkbox("Zusätzliche Quellen DNB/ZDB abfragen (langsamer)")
 
     uploaded_file = st.file_uploader("Literaturliste hochladen (TXT oder DOCX)", type=["txt", "docx"])
     if uploaded_file:
@@ -349,7 +328,7 @@ def main():
         if not einträge:
             st.warning("Keine ISBN oder DOI im Text gefunden.")
         else:
-            überprüfe(einträge)
+            überprüfe(einträge, include_dnb_zdb)
 
 
 if __name__ == "__main__":
