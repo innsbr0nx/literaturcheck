@@ -303,12 +303,12 @@ def vergleiche(eintrag, metadata):
     }
 
 
-def query_isbn_sources(isbn, titel=None):
+def query_isbn_sources(isbn, titel=None, langsame=False):
     results = []
 
-    # Erst: schnelle ISBN-Quellen
+    # 1) ISBN-Varianten generieren
     for variant in generate_isbn_variants(isbn):
-        for func in [get_metadata_googlebooks, get_metadata_openlibrary, get_metadata_worldcat_sru]:
+        for func in [get_metadata_googlebooks, get_metadata_openlibrary]:
             try:
                 md = func(variant)
                 if md:
@@ -317,20 +317,42 @@ def query_isbn_sources(isbn, titel=None):
             except:
                 continue
 
-    # Dann: DNB/ZDB (nutzt ISBN + Titel-Fallback)
-    try:
-        dnb = get_metadata_dnb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
-        if dnb:
-            results.append(dnb)
-    except:
-        pass
+        if langsame:
+            try:
+                md = get_metadata_worldcat_sru(variant)
+                if md:
+                    md["isbn_variant"] = variant
+                    results.append(md)
+            except:
+                continue
 
-    try:
-        zdb = get_metadata_zdb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
-        if zdb:
-            results.append(zdb)
-    except:
-        pass
+    # 2) DNB / ZDB abfragen (mit ISBN, Fallback Titel)
+    if langsame:
+        try:
+            dnb = get_metadata_dnb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
+            if dnb:
+                results.append(dnb)
+        except:
+            pass
+
+        try:
+            zdb = get_metadata_zdb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
+            if zdb:
+                results.append(zdb)
+        except:
+            pass
+
+    # 3) Falls gar nichts → Fallback Titelsuche
+    if not results and titel:
+        if langsame:
+            for func in [get_metadata_dnb, get_metadata_zdb]:
+                try:
+                    md = func({"id": None, "typ": "titel", "titel": titel, "autor": ""})
+                    if md:
+                        results.append(md)
+                except:
+                    continue
+        # Google Titelsuche wäre eine Erweiterung → API unterstützt aber kein reines Titelquery ohne Tricks
 
     return results
 
@@ -390,17 +412,9 @@ def überprüfe(einträge, langsame_quellen=False):
 
         if eintrag["typ"] == "doi":
             quellen = [get_metadata_crossref, get_metadata_doi_rest]
+            res_list = fetch_all_metadata(eintrag, quellen)
         else:
-            quellen = [get_metadata_googlebooks, get_metadata_openlibrary]
-            if langsame_quellen:
-                quellen += [
-                    get_metadata_worldcat_sru,
-                    lambda x: get_metadata_dnb(x),
-                    lambda x: get_metadata_zdb(x)
-                ]
-
-        # Metadaten holen
-        res_list = fetch_all_metadata(eintrag, quellen)
+            res_list = [vergleiche(eintrag, md) for md in query_isbn_sources(eintrag["id"], eintrag["titel"], langsame=langsame_quellen)]
 
         if res_list:
             best = max(res_list, key=lambda r: r["titel_score"])
