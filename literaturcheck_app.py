@@ -302,17 +302,31 @@ def fetch_all_metadata(eintrag, quellen, langsame=False):
 def vergleiche(eintrag, metadata):
     if not metadata:
         return {"quelle": "keine", "titel_score": 0, "autor_match": False, "autoren_api": []}
-    titel_score = fuzz.token_sort_ratio(eintrag["titel"].lower(), metadata["titel"].lower())
-    autor_match = any(
-        fuzz.partial_ratio(eintrag["autor"].lower(), a.lower()) >= 70
-        for a in metadata.get("autoren", [])
+
+    titel_score = fuzz.token_sort_ratio(
+        eintrag["titel"].lower(), 
+        metadata["titel"].lower()
     )
+
+    # Autor-Vergleich toleranter machen
+    autor_score = 0
+    for a in metadata.get("autoren", []):
+        autor_score = max(autor_score, fuzz.partial_ratio(eintrag["autor"].lower(), a.lower()))
+
+    autor_match = autor_score >= 60   # vorher 70
+
+    # Kombinierte Bewertung
+    combined_score = titel_score
+    if autor_match:
+        combined_score += 15   # Bonus, wenn Autor passt
+
     return {
         "quelle": metadata["quelle"],
-        "titel_score": titel_score,
+        "titel_score": combined_score,
         "autor_match": autor_match,
-        "autoren_api": metadata.get("autoren", [])
+        "autoren_api": metadata.get("autoren", []),
     }
+
 
 
 def query_isbn_sources(isbn, titel=None, langsame=False):
