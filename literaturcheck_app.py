@@ -279,6 +279,22 @@ def get_metadata_zdb(eintrag):
     return best
 
 
+def fetch_all_metadata(eintrag, quellen, langsame=False):
+    if eintrag["typ"] == "isbn":
+        md_list = query_isbn_sources(eintrag["id"], eintrag["titel"], langsame=langsame)
+        return [vergleiche(eintrag, md) for md in md_list]
+    else:
+        results = []
+        with ThreadPoolExecutor(max_workers=len(quellen)) as executor:
+            futures = {executor.submit(q, eintrag["id"]): q for q in quellen}
+            for f in as_completed(futures):
+                try:
+                    md = f.result(timeout=6)
+                    results.append(vergleiche(eintrag, md))
+                except:
+                    continue
+        return results
+
 # ===============================
 # Vergleichsfunktionen
 # ===============================
