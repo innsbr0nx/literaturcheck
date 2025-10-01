@@ -246,6 +246,10 @@ def überprüfe(einträge):
             else:
                 status = "❌ Keine Übereinstimmung"
 
+            autoren_api = res.get("autoren_api", [])
+            if isinstance(autoren_api, list):
+                autoren_api = ", ".join(autoren_api)
+
             alle_ergebnisse.append({
                 "Titel (Input)": eintrag["titel"],
                 "Autor (Input)": eintrag["autor"],
@@ -255,7 +259,7 @@ def überprüfe(einträge):
                 "Titel-Ähnlichkeit": res["titel_score"],
                 "Autor:in gefunden": "Ja" if res["autor_match"] else "Nein",
                 "Titel (API)": res.get("titel_api", ""),
-                "Autor:innen (API)": ", ".join(res.get("autoren_api", [])) if isinstance(res.get("autoren_api", list)) else res.get("autoren_api", ""),
+                "Autor:innen (API)": autoren_api,
                 "Status": status
             })
 
