@@ -305,9 +305,10 @@ def vergleiche(eintrag, metadata):
 
 def query_isbn_sources(isbn, titel=None):
     results = []
+
+    # Erst: schnelle ISBN-Quellen
     for variant in generate_isbn_variants(isbn):
-        for func in [get_metadata_googlebooks, get_metadata_openlibrary, get_metadata_worldcat_sru,
-                     get_metadata_dnb, get_metadata_zdb]:
+        for func in [get_metadata_googlebooks, get_metadata_openlibrary, get_metadata_worldcat_sru]:
             try:
                 md = func(variant)
                 if md:
@@ -315,6 +316,24 @@ def query_isbn_sources(isbn, titel=None):
                     results.append(md)
             except:
                 continue
+
+    # Dann: DNB/ZDB (nutzt ISBN + Titel-Fallback)
+    try:
+        dnb = get_metadata_dnb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
+        if dnb:
+            results.append(dnb)
+    except:
+        pass
+
+    try:
+        zdb = get_metadata_zdb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
+        if zdb:
+            results.append(zdb)
+    except:
+        pass
+
+    return results
+
 
     # Falls keine ISBN-Ergebnisse → Titelsuche (Google, DNB, ZDB)
     if not results and titel:
