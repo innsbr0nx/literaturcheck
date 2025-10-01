@@ -6,10 +6,12 @@ from docx import Document
 from lxml import etree
 import pandas as pd
 
-# =====================
-# Datei einlesen
-# =====================
+# ----------------------------------------------------
+# Hilfsfunktionen
+# ----------------------------------------------------
+
 def lade_datei(datei):
+    """Lädt Text- oder Worddatei und gibt Zeilen zurück."""
     if datei.name.endswith(".txt"):
         zeilen = [l.strip() for l in datei.getvalue().decode("utf-8").splitlines() if l.strip()]
     elif datei.name.endswith(".docx"):
@@ -20,10 +22,9 @@ def lade_datei(datei):
         return []
     return zeilen
 
-# =====================
-# Parsing Literatureinträge
-# =====================
+
 def parse_einträge(zeilen):
+    """Extrahiert DOI oder ISBN, Autor und Titel aus den Zeilen."""
     einträge = []
     for zeile in zeilen:
         try:
@@ -57,9 +58,16 @@ def parse_einträge(zeilen):
             continue
     return einträge
 
-# =====================
+
+def normalize_isbn(isbn: str) -> str:
+    """Entfernt Bindestriche/Leerzeichen aus ISBN."""
+    return isbn.replace("-", "").replace(" ", "").strip()
+
+
+# ----------------------------------------------------
 # DOI-Quellen
-# =====================
+# ----------------------------------------------------
+
 def get_metadata_crossref(doi):
     try:
         r = requests.get(f"https://api.crossref.org/works/{doi}", timeout=15)
@@ -71,6 +79,7 @@ def get_metadata_crossref(doi):
         return {"quelle": "CrossRef", "titel": titel, "autoren": autoren}
     except:
         return None
+
 
 def get_metadata_opencitations(doi):
     try:
@@ -87,6 +96,7 @@ def get_metadata_opencitations(doi):
         return {"quelle": "OpenCitations", "titel": titel, "autoren": [nachname]}
     except:
         return None
+
 
 def get_metadata_doaj(doi):
     try:
@@ -105,6 +115,7 @@ def get_metadata_doaj(doi):
     except:
         return None
 
+
 def get_metadata_doi_rest(doi):
     try:
         url = f"https://doi.org/{doi}"
@@ -119,11 +130,10 @@ def get_metadata_doi_rest(doi):
     except:
         return None
 
-# =====================
+
+# ----------------------------------------------------
 # ISBN-Quellen
-# =====================
-def normalize_isbn(isbn):
-    return isbn.replace("-", "").strip()
+# ----------------------------------------------------
 
 def get_metadata_openlibrary(isbn):
     try:
@@ -138,6 +148,7 @@ def get_metadata_openlibrary(isbn):
     except:
         return None
 
+
 def get_metadata_googlebooks(isbn):
     try:
         url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
@@ -151,6 +162,7 @@ def get_metadata_googlebooks(isbn):
         return {"quelle": "Google Books", "titel": titel, "autoren": autoren}
     except:
         return None
+
 
 def get_metadata_worldcat_sru(isbn):
     try:
@@ -173,8 +185,8 @@ def get_metadata_worldcat_sru(isbn):
     except:
         return None
 
+
 def get_metadata_dnb(isbn):
-    """Deutsche Nationalbibliothek"""
     try:
         url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
         headers = {"Accept": "application/xml"}
@@ -196,8 +208,8 @@ def get_metadata_dnb(isbn):
     except:
         return None
 
+
 def get_metadata_zdb(isbn):
-    """Zeitschriftendatenbank"""
     try:
         url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
         headers = {"Accept": "application/xml"}
@@ -219,6 +231,7 @@ def get_metadata_zdb(isbn):
     except:
         return None
 
+
 def get_metadata_from_all_sources(isbn):
     isbn = normalize_isbn(isbn)
     results = []
@@ -228,9 +241,11 @@ def get_metadata_from_all_sources(isbn):
             results.append(md)
     return results
 
-# =====================
+
+# ----------------------------------------------------
 # Vergleich
-# =====================
+# ----------------------------------------------------
+
 def vergleiche(eintrag, metadata):
     if not metadata:
         return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False}
@@ -238,9 +253,11 @@ def vergleiche(eintrag, metadata):
     autor_match = any(eintrag["autor"].lower() in a.lower() for a in metadata.get("autoren", []))
     return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match}
 
-# =====================
-# Hauptlogik mit Gesamtbewertung
-# =====================
+
+# ----------------------------------------------------
+# Hauptlogik
+# ----------------------------------------------------
+
 def überprüfe(einträge):
     gesamt_ergebnisse = []
 
@@ -269,7 +286,6 @@ def überprüfe(einträge):
                 })
                 res_liste.append(vergleich)
 
-        # Gesamtauswertung
         if any(r["titel_score"] >= 85 and r["autor_match"] for r in res_liste):
             status = "✅ Übereinstimmung"
         elif any(r["titel_score"] >= 85 or r["autor_match"] for r in res_liste):
@@ -277,7 +293,6 @@ def überprüfe(einträge):
         else:
             status = "❌ Keine Übereinstimmung"
 
-        # Beste Quelle wählen
         beste_quelle = None
         if res_liste:
             res_liste.sort(key=lambda r: (r["titel_score"], r["autor_match"]), reverse=True)
@@ -291,25 +306,38 @@ def überprüfe(einträge):
             "Status": status,
             "Beste Quelle": beste_quelle["quelle"] if beste_quelle else "-",
             "Titel (API)": beste_quelle["titel_api"] if beste_quelle else "-",
-            "Autor:innen (API)": ", ".join(beste_quelle["autoren_api"]) if beste_quelle and isinstance(beste_quelle["autoren_api"], list) else (beste_quelle["autoren_api"] if beste_quelle else "-")
+            "Autor:innen (API)": ", ".join(beste_quelle["autoren_api"]) if beste_quelle and isinstance(beste_quelle["autoren_api"], list) else (beste_quelle["autoren_api"] if beste_quelle else "-"),
+            "Similarity (Titel)": beste_quelle["titel_score"] if beste_quelle else 0
         })
 
     if gesamt_ergebnisse:
         df = pd.DataFrame(gesamt_ergebnisse)
 
         def highlight_status(val):
-            if val.startswith("✅"):
-                return 'background-color: #d4edda; color: black;'
-            elif val.startswith("⚠️"):
-                return 'background-color: #fff3cd; color: black;'
-            elif val.startswith("❌"):
-                return 'background-color: #f8d7da; color: black;'
+            if isinstance(val, str):
+                if val.startswith("✅"):
+                    return 'background-color: #d4edda; color: black;'
+                elif val.startswith("⚠️"):
+                    return 'background-color: #fff3cd; color: black;'
+                elif val.startswith("❌"):
+                    return 'background-color: #f8d7da; color: black;'
             return ''
 
-        st.markdown("### Ergebnisse")
-        st.dataframe(df.style.applymap(highlight_status, subset=["Status"]), use_container_width=True)
+        styled_html = (
+            df.style
+            .applymap(highlight_status, subset=["Status"])
+            .set_table_styles([
+                {'selector': 'table', 'props': [('width', '100%'), ('border-collapse', 'collapse')]},
+                {'selector': 'th', 'props': [('text-align', 'left'), ('padding', '6px')]},
+                {'selector': 'td', 'props': [('padding', '6px'), ('max-width', '400px'), ('white-space', 'normal')]}
+            ])
+            .hide(axis="index")
+            .to_html()
+        )
 
-        # CSV-Export
+        st.markdown("### Ergebnisse")
+        st.markdown(styled_html, unsafe_allow_html=True)
+
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Ergebnisse als CSV herunterladen",
@@ -318,15 +346,16 @@ def überprüfe(einträge):
             mime='text/csv'
         )
 
-# =====================
+
+# ----------------------------------------------------
 # Streamlit UI
-# =====================
+# ----------------------------------------------------
+
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
-    st.caption("Literatur-Check mit DOI- und ISBN-Abgleich (CrossRef, Google Books, WorldCat, DNB, ZDB, u.a.)")
+    st.caption("Hinweis: Experimentelle Version – es kann noch zu Fehlalarmen kommen.")
 
     datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
-
     if datei:
         zeilen = lade_datei(datei)
         if zeilen:
@@ -337,6 +366,7 @@ def main():
                 st.warning("Keine gültigen Literatureinträge gefunden.")
         else:
             st.warning("Datei ist leer oder konnte nicht gelesen werden.")
+
 
 if __name__ == "__main__":
     main()
