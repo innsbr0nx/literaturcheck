@@ -319,7 +319,7 @@ def überprüfe(einträge):
 # ---------------------------------------------------
 
 def main():
-    st.title("📚 Litcheck – Literatur-Validierung")
+    st.title("📚 Litcheck – Historia.Scribere ALPHA")
 
     st.write("Lade eine Literaturliste hoch (TXT oder DOCX).")
 
