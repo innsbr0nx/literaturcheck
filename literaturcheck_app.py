@@ -41,11 +41,10 @@ def isbn10_to_isbn13(isbn10: str) -> str:
 
 
 # ---------------------------------------------------
-# Parser für Literaturlisten
+# Parser
 # ---------------------------------------------------
 
 def parse_einträge(text: str):
-    """Extrahiert Einträge aus einer Literaturliste."""
     einträge = []
     for line in text.splitlines():
         line = line.strip()
@@ -74,15 +73,181 @@ def parse_einträge(text: str):
 
 
 # ---------------------------------------------------
-# API-Abfragen (ISBN + DOI) – wie vorher definiert
+# DOI-APIs
 # ---------------------------------------------------
-# hier kommen get_metadata_openlibrary, get_metadata_googlebooks,
-# get_metadata_worldcat_sru, get_metadata_dnb, get_metadata_zdb,
-# get_metadata_crossref, get_metadata_opencitations, get_metadata_doaj,
-# get_metadata_datacite, get_metadata_doi_rest (gekürzt, siehe vorige Version)
+
+def get_metadata_crossref(doi):
+    try:
+        r = requests.get(f"https://api.crossref.org/works/{doi}")
+        if r.status_code != 200:
+            return None
+        data = r.json()["message"]
+        titel = data.get("title", [""])[0]
+        autoren = [a.get("family", "") for a in data.get("author", []) if "family" in a]
+        return {"quelle": "CrossRef", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_opencitations(doi):
+    try:
+        r = requests.get(f"https://opencitations.net/index/api/v1/metadata/{doi}")
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if not data or not isinstance(data, list):
+            return None
+        eintrag = data[0]
+        titel = eintrag.get("title", "")
+        autor_raw = eintrag.get("author", "")
+        nachname = autor_raw.split(",")[0] if "," in autor_raw else autor_raw
+        return {"quelle": "OpenCitations", "titel": titel, "autoren": [nachname]}
+    except:
+        return None
+
+
+def get_metadata_doaj(doi):
+    try:
+        url = f"https://doaj.org/api/v2/search/articles/doi:{doi.replace('/', '%2F')}"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if "results" not in data or not data["results"]:
+            return None
+        artikel = data["results"][0]
+        bib = artikel.get("bibjson", {})
+        titel = bib.get("title", "")
+        autoren_liste = [a.get("name", "") for a in bib.get("author", []) if a.get("name")]
+        return {"quelle": "DOAJ", "titel": titel, "autoren": autoren_liste}
+    except:
+        return None
+
+
+def get_metadata_datacite(doi):
+    try:
+        url = f"https://api.datacite.org/works/{doi}"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        data = r.json().get("data", {}).get("attributes", {})
+        titel = data.get("title", [""])[0] if isinstance(data.get("title"), list) else data.get("title", "")
+        autoren = [c.get("familyName", "") for c in data.get("creators", []) if "familyName" in c]
+        return {"quelle": "DataCite", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_doi_rest(doi):
+    try:
+        url = f"https://doi.org/{doi}"
+        headers = {"Accept": "application/citeproc+json"}
+        r = requests.get(url, headers=headers)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        titel = data.get("title", "")
+        autoren = [a.get("family", "") for a in data.get("author", []) if "family" in a]
+        return {"quelle": "DOI REST API", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
 
 # ---------------------------------------------------
-# Vergleich und Darstellung
+# ISBN-APIs
+# ---------------------------------------------------
+
+def get_metadata_openlibrary(isbn):
+    try:
+        url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json"
+        r = requests.get(url)
+        data = r.json().get(f"ISBN:{isbn}")
+        if not data:
+            return None
+        titel = data.get("title", "")
+        autoren = [a.get("name", "") for a in data.get("authors", [])]
+        return {"quelle": "OpenLibrary", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_googlebooks(isbn):
+    try:
+        url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
+        r = requests.get(url)
+        data = r.json()
+        if 'items' not in data:
+            return None
+        volume_info = data['items'][0].get('volumeInfo', {})
+        titel = volume_info.get('title', '')
+        autoren = volume_info.get('authors', [])
+        return {"quelle": "Google Books", "titel": titel, "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_worldcat_sru(isbn):
+    try:
+        url = f"https://worldcat.org/webservices/catalog/search/sru?version=1.2&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
+        headers = {'Accept': 'application/xml'}
+        r = requests.get(url, headers=headers)
+        tree = etree.fromstring(r.content)
+        ns = {'srw': 'http://www.loc.gov/zing/srw/'}
+        records = tree.findall('.//srw:record', ns)
+        if not records:
+            return None
+        titel = None
+        autoren = []
+        for elem in records[0].iter():
+            if elem.tag.endswith('title') and not titel:
+                titel = elem.text
+            if elem.tag.endswith('name'):
+                autoren.append(elem.text)
+        return {"quelle": "WorldCat", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_dnb(isbn):
+    try:
+        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        tree = etree.fromstring(r.content)
+        titel = None
+        autoren = []
+        for elem in tree.iter():
+            if elem.tag.endswith("title") and not titel:
+                titel = elem.text
+            if elem.tag.endswith("name"):
+                autoren.append(elem.text)
+        return {"quelle": "DNB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_zdb(isbn):
+    try:
+        url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
+        r = requests.get(url)
+        if r.status_code != 200:
+            return None
+        tree = etree.fromstring(r.content)
+        titel = None
+        autoren = []
+        for elem in tree.iter():
+            if elem.tag.endswith("title") and not titel:
+                titel = elem.text
+            if elem.tag.endswith("name"):
+                autoren.append(elem.text)
+        return {"quelle": "ZDB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+
+# ---------------------------------------------------
+# Vergleich
 # ---------------------------------------------------
 
 def vergleiche(eintrag, metadata):
@@ -121,11 +286,11 @@ def vergleiche(eintrag, metadata):
 
 def highlight_rows(row):
     if row["Titel-Ähnlichkeit (%)"] >= 85 and row["Autor:in gefunden"] == "Ja":
-        return ['background-color: #c8e6c9'] * len(row)  # grün
+        return ['background-color: #c8e6c9'] * len(row)
     elif row["Titel-Ähnlichkeit (%)"] >= 70 or row["Autor:in gefunden"] == "Ja":
-        return ['background-color: #fff9c4'] * len(row)  # gelb
+        return ['background-color: #fff9c4'] * len(row)
     else:
-        return ['background-color: #ffcdd2'] * len(row)  # rot
+        return ['background-color: #ffcdd2'] * len(row)
 
 
 def überprüfe(einträge):
@@ -176,7 +341,7 @@ def main():
     if uploaded_file:
         if uploaded_file.type == "text/plain":
             text = uploaded_file.read().decode("utf-8")
-        else:  # DOCX
+        else:
             doc = Document(uploaded_file)
             text = "\n".join([p.text for p in doc.paragraphs])
 
