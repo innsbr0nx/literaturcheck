@@ -176,112 +176,81 @@ def get_metadata_worldcat_sru(isbn):
 def get_metadata_from_all_sources(isbn):
     isbn = normalize_isbn(isbn)
     results = []
-
-    openlib_data = get_metadata_openlibrary(isbn)
-    if openlib_data:
-        results.append(openlib_data)
-
-    google_data = get_metadata_googlebooks(isbn)
-    if google_data:
-        results.append(google_data)
-
-    worldcat_data = get_metadata_worldcat_sru(isbn)
-    if worldcat_data:
-        results.append(worldcat_data)
-
-    if not results:
-        return None
-
-    priority_order = ["Google Books", "WorldCat", "OpenLibrary"]
-    results.sort(key=lambda x: priority_order.index(x["quelle"]) if x["quelle"] in priority_order else 99)
-
-    best = results[0].copy()
-    for res in results[1:]:
-        if not best.get("titel") and res.get("titel"):
-            best["titel"] = res["titel"]
-        if not best.get("autoren") and res.get("autoren"):
-            best["autoren"] = res["autoren"]
-
-    best["quellen"] = [res["quelle"] for res in results]
-    return best
+    for q in [get_metadata_googlebooks, get_metadata_worldcat_sru, get_metadata_openlibrary]:
+        md = q(isbn)
+        if md:
+            results.append(md)
+    return results
 
 # ======================
 # Vergleich
 # ======================
 def vergleiche(eintrag, metadata):
     if not metadata:
-        return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False,
-                "titel_api": "", "autoren_api": ""}
+        return {"titel_score": 0, "autor_match": False}
     titel_score = fuzz.token_sort_ratio(eintrag["titel"].lower(), metadata["titel"].lower())
     autor_match = any(eintrag["autor"].lower() in a.lower() for a in metadata.get("autoren", []))
-    return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match,
-            "titel_api": metadata.get("titel", ""), "autoren_api": metadata.get("autoren", [])}
+    return {"titel_score": titel_score, "autor_match": autor_match}
 
 # ======================
-# Hauptlogik mit Tabelle & Filter
+# Hauptlogik – nur 1 Ergebnis pro Titel
 # ======================
 def überprüfe(einträge):
-    alle_ergebnisse = []
+    gesamt_ergebnisse = []
 
     for eintrag in einträge:
+        res_liste = []
         if eintrag["typ"] == "doi":
             quellen = [get_metadata_crossref, get_metadata_opencitations, get_metadata_doaj, get_metadata_doi_rest]
-            ergebnisse = []
             for q in quellen:
                 md = q(eintrag["id"])
-                res = vergleiche(eintrag, md)
-                ergebnisse.append(res)
-        else:  # ISBN
-            md = get_metadata_from_all_sources(eintrag["id"])
-            res = vergleiche(eintrag, md)
-            ergebnisse = [res]
+                if md:
+                    vergleich = vergleiche(eintrag, md)
+                    vergleich.update({
+                        "quelle": md["quelle"],
+                        "titel_api": md.get("titel", ""),
+                        "autoren_api": md.get("autoren", [])
+                    })
+                    res_liste.append(vergleich)
+        else:
+            md_liste = get_metadata_from_all_sources(eintrag["id"])
+            for md in md_liste:
+                vergleich = vergleiche(eintrag, md)
+                vergleich.update({
+                    "quelle": md["quelle"],
+                    "titel_api": md.get("titel", ""),
+                    "autoren_api": md.get("autoren", [])
+                })
+                res_liste.append(vergleich)
 
-        for res in ergebnisse:
-            if res["titel_score"] >= 85 and res["autor_match"]:
-                status = "✅ Übereinstimmung"
-            elif res["titel_score"] >= 85:
-                status = "⚠️ Titel ok, Autor fehlt"
-            elif res["autor_match"]:
-                status = "⚠️ Autor ok, Titel abweichend"
-            else:
-                status = "❌ Keine Übereinstimmung"
+        # Gesamtauswertung
+        if any(r["titel_score"] >= 85 and r["autor_match"] for r in res_liste):
+            status = "✅ Übereinstimmung"
+        elif any(r["titel_score"] >= 85 or r["autor_match"] for r in res_liste):
+            status = "⚠️ Teilweise Übereinstimmung"
+        else:
+            status = "❌ Keine Übereinstimmung"
 
-            autoren_api = res.get("autoren_api", [])
-            if isinstance(autoren_api, list):
-                autoren_api = ", ".join(autoren_api)
+        # Beste Quelle auswählen (höchster Titel-Score, dann Autor-Match bevorzugt)
+        beste_quelle = None
+        if res_liste:
+            res_liste.sort(key=lambda r: (r["titel_score"], r["autor_match"]), reverse=True)
+            beste_quelle = res_liste[0]
 
-            alle_ergebnisse.append({
-                "Titel (Input)": eintrag["titel"],
-                "Autor (Input)": eintrag["autor"],
-                "Typ": eintrag["typ"].upper(),
-                "ID": eintrag["id"],
-                "Quelle": res["quelle"],
-                "Titel-Ähnlichkeit": res["titel_score"],
-                "Autor:in gefunden": "Ja" if res["autor_match"] else "Nein",
-                "Titel (API)": res.get("titel_api", ""),
-                "Autor:innen (API)": autoren_api,
-                "Status": status
-            })
+        gesamt_ergebnisse.append({
+            "Titel (Input)": eintrag["titel"],
+            "Autor (Input)": eintrag["autor"],
+            "Typ": eintrag["typ"].upper(),
+            "ID": eintrag["id"],
+            "Status": status,
+            "Beste Quelle": beste_quelle["quelle"] if beste_quelle else "-",
+            "Titel (API)": beste_quelle["titel_api"] if beste_quelle else "-",
+            "Autor:innen (API)": ", ".join(beste_quelle["autoren_api"]) if beste_quelle and isinstance(beste_quelle["autoren_api"], list) else (beste_quelle["autoren_api"] if beste_quelle else "-")
+        })
 
-    if alle_ergebnisse:
-        df = pd.DataFrame(alle_ergebnisse)
+    if gesamt_ergebnisse:
+        df = pd.DataFrame(gesamt_ergebnisse)
 
-        # --- Filter-Menü ---
-        st.sidebar.markdown("## 🔎 Filter")
-        typ_filter = st.sidebar.multiselect(
-            "Filter nach Typ",
-            options=df["Typ"].unique(),
-            default=df["Typ"].unique()
-        )
-        status_filter = st.sidebar.multiselect(
-            "Filter nach Status",
-            options=df["Status"].unique(),
-            default=df["Status"].unique()
-        )
-
-        df_filtered = df[df["Typ"].isin(typ_filter) & df["Status"].isin(status_filter)]
-
-        # --- Farbiges Highlighting ---
         def highlight_status(val):
             if val.startswith("✅"):
                 return 'background-color: #d4edda; color: black;'
@@ -292,23 +261,24 @@ def überprüfe(einträge):
             return ''
 
         st.markdown("### Ergebnisse")
-        st.dataframe(df_filtered.style.applymap(highlight_status, subset=["Status"]), use_container_width=True)
+        st.dataframe(df.style.applymap(highlight_status, subset=["Status"]), use_container_width=True)
 
         # --- CSV-Export ---
-        csv = df_filtered.to_csv(index=False).encode('utf-8')
+        csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Gefilterte Ergebnisse als CSV herunterladen",
+            label="📥 Ergebnisse als CSV herunterladen",
             data=csv,
             file_name='literaturcheck_ergebnisse.csv',
             mime='text/csv'
         )
+
 
 # ======================
 # Streamlit UI
 # ======================
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
-    st.caption("Hinweis: KI-Prototyp – Ergebnisse mit Vorsicht verwenden.")
+    st.caption("Hinweis: Ein zusammengebastelter KI-Prototyp – Ergebnisse mit Vorsicht verwenden.")
 
     datei = st.file_uploader("📂 Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
 
