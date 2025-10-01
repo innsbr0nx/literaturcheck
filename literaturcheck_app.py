@@ -170,6 +170,71 @@ def get_metadata_worldcat_sru(isbn):
         return {"quelle": "WorldCat", "titel": titel or "", "autoren": autoren}
     except:
         return None
+        
+# ===============================
+# DNB & ZDB SRU-Schnittstellen
+# ===============================
+
+def get_metadata_dnb(isbn=None, titel=None):
+    try:
+        if isbn:
+            query = f"pica.isb={isbn}"
+        elif titel:
+            query = f"pica.tit={titel}"
+        else:
+            return None
+        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query={query}&maximumRecords=1"
+        headers = {"Accept": "application/xml"}
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code != 200:
+            return None
+
+        tree = etree.fromstring(r.content)
+        ns = {"srw": "http://www.loc.gov/zing/srw/"}
+        record = tree.find(".//srw:record", ns)
+        if record is None:
+            return None
+
+        titel, autoren = None, []
+        for elem in record.iter():
+            if elem.tag.endswith("title") and not titel:
+                titel = elem.text
+            if elem.tag.endswith("creator"):
+                autoren.append(elem.text)
+        return {"quelle": "DNB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+
+def get_metadata_zdb(isbn=None, titel=None):
+    try:
+        if isbn:
+            query = f"num={isbn}"
+        elif titel:
+            query = f"tit={titel}"
+        else:
+            return None
+        url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query={query}&maximumRecords=1"
+        headers = {"Accept": "application/xml"}
+        r = requests.get(url, headers=headers, timeout=8)
+        if r.status_code != 200:
+            return None
+
+        tree = etree.fromstring(r.content)
+        ns = {"srw": "http://www.loc.gov/zing/srw/"}
+        record = tree.find(".//srw:record", ns)
+        if record is None:
+            return None
+
+        titel, autoren = None, []
+        for elem in record.iter():
+            if elem.tag.endswith("title") and not titel:
+                titel = elem.text
+            if elem.tag.endswith("creator"):
+                autoren.append(elem.text)
+        return {"quelle": "ZDB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
 
 
 # ===============================
@@ -195,7 +260,8 @@ def vergleiche(eintrag, metadata):
 def query_isbn_sources(isbn, titel=None):
     results = []
     for variant in generate_isbn_variants(isbn):
-        for func in [get_metadata_googlebooks, get_metadata_openlibrary, get_metadata_worldcat_sru]:
+        for func in [get_metadata_googlebooks, get_metadata_openlibrary, get_metadata_worldcat_sru,
+                     get_metadata_dnb, get_metadata_zdb]:
             try:
                 md = func(variant)
                 if md:
@@ -203,20 +269,22 @@ def query_isbn_sources(isbn, titel=None):
                     results.append(md)
             except:
                 continue
+
+    # Falls keine ISBN-Ergebnisse → Titelsuche (Google, DNB, ZDB)
     if not results and titel:
-        try:
-            r = requests.get(f"https://www.googleapis.com/books/v1/volumes?q=intitle:{titel}", timeout=6)
-            data = r.json()
-            if "items" in data:
-                volume_info = data["items"][0]["volumeInfo"]
-                results.append({
-                    "quelle": "GoogleBooks (Titelsuche)",
-                    "titel": volume_info.get("title", ""),
-                    "autoren": volume_info.get("authors", [])
-                })
-        except:
-            pass
+        for func in [
+            lambda t: get_metadata_googlebooks(isbn=None),
+            lambda t: get_metadata_dnb(titel=t),
+            lambda t: get_metadata_zdb(titel=t)
+        ]:
+            try:
+                md = func(titel)
+                if md:
+                    results.append(md)
+            except:
+                continue
     return results
+
 
 
 def fetch_all_metadata(eintrag, quellen):
