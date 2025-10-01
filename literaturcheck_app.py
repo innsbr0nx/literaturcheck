@@ -87,12 +87,12 @@ def isbn10_to_isbn13(isbn10: str) -> str:
 
 def get_metadata_crossref(doi):
     try:
-        r = requests.get(f"https://api.crossref.org/works/{doi}", timeout=5)
+        r = requests.get(f"https://api.crossref.org/works/{doi}", timeout=6)
         if r.status_code != 200:
             return None
         data = r.json()["message"]
         titel = data.get("title", [""])[0]
-        autoren = [a["family"] for a in data.get("author", []) if "family" in a]
+        autoren = [a.get("family") for a in data.get("author", []) if "family" in a]
         return {"quelle": "CrossRef", "titel": titel, "autoren": autoren}
     except:
         return None
@@ -101,7 +101,7 @@ def get_metadata_doi_rest(doi):
     try:
         url = f"https://doi.org/{doi}"
         headers = {"Accept": "application/citeproc+json"}
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=6)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -119,7 +119,7 @@ def get_metadata_doi_rest(doi):
 def get_metadata_openlibrary(isbn):
     try:
         url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json"
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=6)
         data = r.json().get(f"ISBN:{isbn}")
         if not data:
             return None
@@ -134,7 +134,7 @@ def get_metadata_googlebooks(isbn):
     for candidate in {isbn, isbn10_to_isbn13(isbn) if len(isbn)==10 else isbn}:
         try:
             url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{candidate}"
-            r = requests.get(url, timeout=5)
+            r = requests.get(url, timeout=6)
             data = r.json()
             if 'items' in data:
                 volume_info = data['items'][0].get('volumeInfo', {})
@@ -149,7 +149,7 @@ def get_metadata_worldcat_sru(isbn):
     try:
         url = f"https://worldcat.org/webservices/catalog/search/sru?version=1.2&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
         headers = {'Accept': 'application/xml'}
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=8)
         tree = etree.fromstring(r.content)
         ns = {'srw': 'http://www.loc.gov/zing/srw/'}
         records = tree.findall('.//srw:record', ns)
@@ -163,6 +163,38 @@ def get_metadata_worldcat_sru(isbn):
             if elem.tag.endswith('name'):
                 autoren.append(elem.text)
         return {"quelle": "WorldCat", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+def get_metadata_dnb(isbn):
+    try:
+        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&recordSchema=MARC21-xml"
+        r = requests.get(url, timeout=8)
+        tree = etree.fromstring(r.content)
+        titel = None
+        autoren = []
+        for elem in tree.iter():
+            if elem.tag.endswith("245") and not titel:
+                titel = "".join([c.text or "" for c in elem if c.text])
+            if elem.tag.endswith("100") or elem.tag.endswith("700"):
+                autoren.append("".join([c.text or "" for c in elem if c.text]))
+        return {"quelle": "DNB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+def get_metadata_zdb(isbn):
+    try:
+        url = f"http://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query=isbn={isbn}"
+        r = requests.get(url, timeout=8)
+        tree = etree.fromstring(r.content)
+        titel = None
+        autoren = []
+        for elem in tree.iter():
+            if elem.tag.endswith("title") and not titel:
+                titel = elem.text
+            if elem.tag.endswith("name"):
+                autoren.append(elem.text)
+        return {"quelle": "ZDB", "titel": titel or "", "autoren": autoren}
     except:
         return None
 
@@ -193,7 +225,7 @@ def fetch_all_metadata(eintrag, quellen):
         future_to_source = {executor.submit(q, eintrag["id"]): q for q in quellen}
         for future in as_completed(future_to_source):
             try:
-                md = future.result(timeout=6)
+                md = future.result(timeout=9)
                 results.append(vergleiche(eintrag, md))
             except Exception:
                 continue
@@ -224,7 +256,7 @@ def überprüfe(einträge, langsame_quellen=False):
         else:
             quellen = [get_metadata_googlebooks, get_metadata_openlibrary]
             if langsame_quellen:
-                quellen += [get_metadata_worldcat_sru]  # + DNB/ZDB möglich
+                quellen += [get_metadata_worldcat_sru, get_metadata_dnb, get_metadata_zdb]
 
         res_list = fetch_all_metadata(eintrag, quellen)
 
@@ -262,7 +294,7 @@ def überprüfe(einträge, langsame_quellen=False):
 
 def main():
     st.title("Litcheck Historia.Scribere BETA")
-    st.caption("Prüft DOIs und ISBNs gegen mehrere Datenbanken (schnelle Quellen standardmäßig, langsame optional).")
+    st.caption("Prüft DOIs und ISBNs gegen mehrere Datenbanken. Optional mit langsamen Quellen (WorldCat, DNB, ZDB).")
 
     langsame = st.checkbox("Auch langsame Quellen (WorldCat, DNB, ZDB) einbeziehen", value=False)
 
