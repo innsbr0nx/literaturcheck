@@ -178,31 +178,44 @@ def get_metadata_worldcat_sru(isbn):
 def get_metadata_dnb(isbn=None, titel=None):
     try:
         if isbn:
-            query = f"pica.isb={isbn}"
+            query = f"num={isbn}"
         elif titel:
             query = f"pica.tit={titel}"
         else:
             return None
-        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query={query}&maximumRecords=1"
+
+        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&recordSchema=MARC21-xml&query={query}&maximumRecords=1"
         headers = {"Accept": "application/xml"}
         r = requests.get(url, headers=headers, timeout=8)
         if r.status_code != 200:
             return None
 
         tree = etree.fromstring(r.content)
-        ns = {"srw": "http://www.loc.gov/zing/srw/"}
-        record = tree.find(".//srw:record", ns)
+        ns = {"marc": "http://www.loc.gov/MARC21/slim"}
+
+        record = tree.find(".//marc:record", ns)
         if record is None:
             return None
 
-        titel, autoren = None, []
-        for elem in record.iter():
-            if elem.tag.endswith("title") and not titel:
-                titel = elem.text
-            if elem.tag.endswith("creator"):
-                autoren.append(elem.text)
-        return {"quelle": "DNB", "titel": titel or "", "autoren": autoren}
-    except:
+        titel_parts, autoren = [], []
+
+        for df in record.findall("marc:datafield", ns):
+            tag = df.attrib.get("tag")
+
+            if tag == "245":  # Titel
+                for sf in df.findall("marc:subfield", ns):
+                    if sf.attrib.get("code") in ["a", "b"]:
+                        titel_parts.append(sf.text.strip() if sf.text else "")
+
+            if tag in ["100", "700"]:  # Autor/en
+                for sf in df.findall("marc:subfield", ns):
+                    if sf.attrib.get("code") == "a" and sf.text:
+                        autoren.append(sf.text.strip())
+
+        titel = " ".join(titel_parts).strip(" /:")
+        return {"quelle": "DNB", "titel": titel, "autoren": autoren}
+
+    except Exception as e:
         return None
 
 
