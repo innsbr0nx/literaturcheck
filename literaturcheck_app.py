@@ -6,9 +6,9 @@ from docx import Document
 from lxml import etree
 import pandas as pd
 
-# ======================
-# Datei-Upload
-# ======================
+# =====================
+# Datei einlesen
+# =====================
 def lade_datei(datei):
     if datei.name.endswith(".txt"):
         zeilen = [l.strip() for l in datei.getvalue().decode("utf-8").splitlines() if l.strip()]
@@ -20,9 +20,9 @@ def lade_datei(datei):
         return []
     return zeilen
 
-# ======================
-# Parsing der Einträge
-# ======================
+# =====================
+# Parsing Literatureinträge
+# =====================
 def parse_einträge(zeilen):
     einträge = []
     for zeile in zeilen:
@@ -57,12 +57,12 @@ def parse_einträge(zeilen):
             continue
     return einträge
 
-# ======================
+# =====================
 # DOI-Quellen
-# ======================
+# =====================
 def get_metadata_crossref(doi):
     try:
-        r = requests.get(f"https://api.crossref.org/works/{doi}")
+        r = requests.get(f"https://api.crossref.org/works/{doi}", timeout=15)
         if r.status_code != 200:
             return None
         data = r.json()["message"]
@@ -74,7 +74,7 @@ def get_metadata_crossref(doi):
 
 def get_metadata_opencitations(doi):
     try:
-        r = requests.get(f"https://opencitations.net/index/api/v1/metadata/{doi}")
+        r = requests.get(f"https://opencitations.net/index/api/v1/metadata/{doi}", timeout=15)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -91,7 +91,7 @@ def get_metadata_opencitations(doi):
 def get_metadata_doaj(doi):
     try:
         url = f"https://doaj.org/api/v2/search/articles/doi:{doi.replace('/', '%2F')}"
-        r = requests.get(url)
+        r = requests.get(url, timeout=15)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -109,7 +109,7 @@ def get_metadata_doi_rest(doi):
     try:
         url = f"https://doi.org/{doi}"
         headers = {"Accept": "application/citeproc+json"}
-        r = requests.get(url, headers=headers)
+        r = requests.get(url, headers=headers, timeout=15)
         if r.status_code != 200:
             return None
         data = r.json()
@@ -119,16 +119,16 @@ def get_metadata_doi_rest(doi):
     except:
         return None
 
-# ======================
+# =====================
 # ISBN-Quellen
-# ======================
+# =====================
 def normalize_isbn(isbn):
     return isbn.replace("-", "").strip()
 
 def get_metadata_openlibrary(isbn):
     try:
         url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&jscmd=data&format=json"
-        r = requests.get(url)
+        r = requests.get(url, timeout=15)
         data = r.json().get(f"ISBN:{isbn}")
         if not data:
             return None
@@ -141,7 +141,7 @@ def get_metadata_openlibrary(isbn):
 def get_metadata_googlebooks(isbn):
     try:
         url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
-        r = requests.get(url)
+        r = requests.get(url, timeout=15)
         data = r.json()
         if 'items' not in data:
             return None
@@ -156,7 +156,7 @@ def get_metadata_worldcat_sru(isbn):
     try:
         url = f"https://worldcat.org/webservices/catalog/search/sru?version=1.2&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
         headers = {'Accept': 'application/xml'}
-        r = requests.get(url, headers=headers)
+        r = requests.get(url, headers=headers, timeout=15)
         tree = etree.fromstring(r.content)
         ns = {'srw': 'http://www.loc.gov/zing/srw/'}
         records = tree.findall('.//srw:record', ns)
@@ -173,28 +173,74 @@ def get_metadata_worldcat_sru(isbn):
     except:
         return None
 
+def get_metadata_dnb(isbn):
+    """Deutsche Nationalbibliothek"""
+    try:
+        url = f"https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
+        headers = {"Accept": "application/xml"}
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return None
+        tree = etree.fromstring(r.content)
+        ns = {'srw': 'http://www.loc.gov/zing/srw/'}
+        records = tree.findall('.//srw:record', ns)
+        if not records:
+            return None
+        titel, autoren = None, []
+        for elem in records[0].iter():
+            if elem.tag.endswith('title') and not titel:
+                titel = elem.text
+            if elem.tag.endswith('name'):
+                autoren.append(elem.text)
+        return {"quelle": "DNB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
+def get_metadata_zdb(isbn):
+    """Zeitschriftendatenbank"""
+    try:
+        url = f"https://services.dnb.de/sru/zdb?version=1.1&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
+        headers = {"Accept": "application/xml"}
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return None
+        tree = etree.fromstring(r.content)
+        ns = {'srw': 'http://www.loc.gov/zing/srw/'}
+        records = tree.findall('.//srw:record', ns)
+        if not records:
+            return None
+        titel, autoren = None, []
+        for elem in records[0].iter():
+            if elem.tag.endswith('title') and not titel:
+                titel = elem.text
+            if elem.tag.endswith('name'):
+                autoren.append(elem.text)
+        return {"quelle": "ZDB", "titel": titel or "", "autoren": autoren}
+    except:
+        return None
+
 def get_metadata_from_all_sources(isbn):
     isbn = normalize_isbn(isbn)
     results = []
-    for q in [get_metadata_googlebooks, get_metadata_worldcat_sru, get_metadata_openlibrary]:
+    for q in [get_metadata_googlebooks, get_metadata_worldcat_sru, get_metadata_openlibrary, get_metadata_dnb, get_metadata_zdb]:
         md = q(isbn)
         if md:
             results.append(md)
     return results
 
-# ======================
+# =====================
 # Vergleich
-# ======================
+# =====================
 def vergleiche(eintrag, metadata):
     if not metadata:
-        return {"titel_score": 0, "autor_match": False}
+        return {"quelle": "unbekannt", "titel_score": 0, "autor_match": False}
     titel_score = fuzz.token_sort_ratio(eintrag["titel"].lower(), metadata["titel"].lower())
     autor_match = any(eintrag["autor"].lower() in a.lower() for a in metadata.get("autoren", []))
-    return {"titel_score": titel_score, "autor_match": autor_match}
+    return {"quelle": metadata["quelle"], "titel_score": titel_score, "autor_match": autor_match}
 
-# ======================
-# Hauptlogik – 1 Ergebnis pro Titel mit bester Quelle
-# ======================
+# =====================
+# Hauptlogik mit Gesamtbewertung
+# =====================
 def überprüfe(einträge):
     gesamt_ergebnisse = []
 
@@ -231,7 +277,7 @@ def überprüfe(einträge):
         else:
             status = "❌ Keine Übereinstimmung"
 
-        # Beste Quelle auswählen
+        # Beste Quelle wählen
         beste_quelle = None
         if res_liste:
             res_liste.sort(key=lambda r: (r["titel_score"], r["autor_match"]), reverse=True)
@@ -244,8 +290,6 @@ def überprüfe(einträge):
             "ID": eintrag["id"],
             "Status": status,
             "Beste Quelle": beste_quelle["quelle"] if beste_quelle else "-",
-            "Titel-Ähnlichkeit (%)": beste_quelle["titel_score"] if beste_quelle else 0,
-            "Autor:innen gefunden": "Ja" if beste_quelle and beste_quelle["autor_match"] else "Nein",
             "Titel (API)": beste_quelle["titel_api"] if beste_quelle else "-",
             "Autor:innen (API)": ", ".join(beste_quelle["autoren_api"]) if beste_quelle and isinstance(beste_quelle["autoren_api"], list) else (beste_quelle["autoren_api"] if beste_quelle else "-")
         })
@@ -265,7 +309,7 @@ def überprüfe(einträge):
         st.markdown("### Ergebnisse")
         st.dataframe(df.style.applymap(highlight_status, subset=["Status"]), use_container_width=True)
 
-        # --- CSV-Export ---
+        # CSV-Export
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Ergebnisse als CSV herunterladen",
@@ -274,14 +318,14 @@ def überprüfe(einträge):
             mime='text/csv'
         )
 
-# ======================
+# =====================
 # Streamlit UI
-# ======================
+# =====================
 def main():
     st.title("Litcheck Historia.Scribere ALPHA")
-    st.caption("Hinweis: KI-Prototyp – Ergebnisse mit Vorsicht verwenden.")
+    st.caption("Literatur-Check mit DOI- und ISBN-Abgleich (CrossRef, Google Books, WorldCat, DNB, ZDB, u.a.)")
 
-    datei = st.file_uploader("📂 Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
+    datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
 
     if datei:
         zeilen = lade_datei(datei)
