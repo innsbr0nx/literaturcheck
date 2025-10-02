@@ -264,7 +264,7 @@ def query_dnb(isbn=None, titel=None):
 
     # Erst ISBN
     if isbn:
-        params["query"] = f"pica.isb={isbn}"
+        params["query"] = f"isbn={isbn}"
         try:
             r = requests.get(base, params=params, timeout=10)
             recs = parse_marcxml_records(r.content, "DNB")
