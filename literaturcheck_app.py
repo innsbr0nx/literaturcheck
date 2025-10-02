@@ -80,14 +80,10 @@ def isbn10_to_isbn13(isbn10: str) -> str:
 def generate_isbn_variants(isbn: str) -> list:
     variants = set()
     clean = re.sub(r"[^0-9Xx]", "", isbn).upper()
-    variants.add(clean)  # nur reine Nummer, ohne Bindestriche
+    variants.add(clean)
     
-    # ISBN10 → ISBN13 umwandeln (wenn ISBN10)
     if len(clean) == 10:
         variants.add(isbn10_to_isbn13(clean))
-    
-    # Optional: ISBN13 mit 978-Präfix ohne Prüfziffer (Core)
-    # falls relevant, kannst du das drinlassen oder weglassen
     if len(clean) == 13 and clean.startswith("978"):
         core = clean[3:-1]
         variants.add(core)
@@ -179,7 +175,7 @@ def get_metadata_worldcat_sru(isbn):
 def query_isbn_sources(isbn, titel=None, langsame=False):
     results = []
     variants = generate_isbn_variants(isbn)
-    
+
     for variant in variants:
         for func in [get_metadata_googlebooks, get_metadata_openlibrary]:
             try:
@@ -198,7 +194,6 @@ def query_isbn_sources(isbn, titel=None, langsame=False):
                     results.append(md)
             except:
                 continue
-
 
     # 2) DNB/ZDB (ISBN → Fallback Titel)
     if langsame:
@@ -226,6 +221,7 @@ def query_isbn_sources(isbn, titel=None, langsame=False):
                 continue
 
     return results
+
 
 # ===============================
 # DNB & ZDB SRU-Schnittstellen
