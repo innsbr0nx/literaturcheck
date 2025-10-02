@@ -22,6 +22,23 @@ def lade_datei(datei):
         return []
     return zeilen
 
+def parse_autoren(autor_text):
+    autor_text = re.sub(r"\(Hrsg\.\)", "", autor_text, flags=re.IGNORECASE)
+    autor_text = re.sub(r"et al\.?", "", autor_text, flags=re.IGNORECASE)
+    autor_text = autor_text.strip()
+
+    teile = re.split(r"\s+und\s+|\s+and\s+", autor_text)
+
+    autoren = []
+    for teil in teile:
+        teil = teil.strip()
+        if ',' in teil:
+            nachname, vorname = [t.strip() for t in teil.split(',', 1)]
+            autoren.append(f"{vorname} {nachname}")
+        else:
+            autoren.append(teil)
+
+    return autoren
 
 def parse_einträge(zeilen):
     einträge = []
@@ -33,23 +50,32 @@ def parse_einträge(zeilen):
             if doi_match:
                 identifier = doi_match.group(1).strip()
                 id_typ = "doi"
+                main_part = zeile[:doi_match.start()].strip()
             elif isbn_match:
                 identifier = normalize_isbn(isbn_match.group(1))
                 id_typ = "isbn"
+                main_part = zeile[:isbn_match.start()].strip()
             else:
                 continue
 
-            teile = [t.strip() for t in zeile.split(',')]
-            autor_teil = teile[0]
+            # Zerlegen des Hauptteils vor DOI/ISBN anhand von Kommas
+            teile = [t.strip() for t in main_part.split(',')]
 
-            # Wenn der zweite Teil mit 'und' existiert, erweitere den autor_teil
-            if len(teile) > 1:
-                # Hole alles vor dem Titel (angenommen Titel ist ab dem 3. Komma)
-                autor_teil = ",".join(teile[:2])  # falls nur zwei Teile
+            # Autoren sind meist der erste Teil oder bei 'und' auch zweiter Teil
+            # Versuche Autoren-Teil: Alle Teile bis zum Titel (zweiter oder dritter Teil)
+            autor_teil = teile[0]
+            if len(teile) > 1 and (' und ' in teile[1] or ' and ' in teile[1]):
+                autor_teil = ', '.join(teile[:2])
 
             autoren = parse_autoren(autor_teil)
 
-            titel = teile[2].strip() if len(teile) >= 3 else "unbekannter Titel"
+            # Titel ist alles nach Autoren
+            if autor_teil == teile[0]:
+                titel_teile = teile[1:]
+            else:
+                titel_teile = teile[2:]
+
+            titel = ', '.join(titel_teile).strip() if titel_teile else "unbekannter Titel"
 
             einträge.append({
                 'typ': id_typ,
@@ -57,8 +83,7 @@ def parse_einträge(zeilen):
                 'titel': titel,
                 'autor': ", ".join(autoren)
             })
-        except Exception as e:
-            # Optional: Fehler ausgeben
+        except Exception:
             continue
     return einträge
 
