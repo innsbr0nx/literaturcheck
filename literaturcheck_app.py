@@ -41,55 +41,48 @@ def parse_einträge(zeilen):
             else:
                 continue  # Kein DOI/ISBN → überspringen
 
-            # Bereich vor DOI/ISBN extrahieren (Autor:innen + Titel)
-            kopf = zeile[:id_pos].strip().rstrip(",.;:")
+            # Den Teil vor DOI/ISBN extrahieren
+            kopf = zeile[:id_pos].strip().rstrip(",.;")
 
-            # ===========================
-            # AUTOR:INNEN EXTRAKTION
-            # ===========================
+            # === AUTOR:INNEN ===
+            # Entferne (Hrsg.) oder (Ed.)
+            kopf_clean = re.sub(r'\(.*?\)', '', kopf)
+
+            # Entferne et al.
+            kopf_clean = re.sub(r'\bet al\.?\b', '', kopf_clean, flags=re.IGNORECASE).strip()
+
             autoren_raw = ""
             titel_raw = ""
 
-            # Splitte bei erstem Vorkommen von drei Teilen mit Komma → „Nachname, Vorname, Titel…“
-            teile = kopf.split(',')
-            if len(teile) < 2:
-                continue  # Ungültige Struktur
-
-            # Prüfe, ob "und" in den ersten zwei Teilen vorkommt → mehrere Autor:innen
-            autoren_teil = ','.join(teile[:2])
-            rest = ','.join(teile[2:]) if len(teile) > 2 else ""
-
-            if ' und ' in kopf:
-                # Beispiel: "Nachname, Vorname und Vorname Nachname (Hrsg.)"
-                autoren_split = kopf.split(' und ')
+            # Mehrere Autoren mit "und"
+            if ' und ' in kopf_clean:
+                teile = kopf_clean.split(' und ')
                 autoren = []
 
-                # Erster Autor in „Nachname, Vorname“ → lassen
-                autoren.append(autoren_split[0].strip())
+                # Ersten Autor im Format „Nachname, Vorname“ lassen
+                autoren.append(teile[0].strip())
 
-                # Weitere Autor:innen in „Vorname Nachname“ → umdrehen
-                for weiterer in autoren_split[1:]:
-                    weiterer = re.sub(r'\(.*?\)', '', weiterer).strip()
-                    parts = weiterer.split()
+                for weiterer in teile[1:]:
+                    parts = weiterer.strip().split()
                     if len(parts) >= 2:
                         nachname = parts[-1]
                         vorname = ' '.join(parts[:-1])
                         autoren.append(f"{nachname}, {vorname}")
                     else:
-                        autoren.append(weiterer)
-                autoren_raw = "; ".join(autoren)
-                # Titel = Teil nach dem letzten Autor
-                titel_start = zeile.find(autoren_split[-1]) + len(autoren_split[-1])
-                titel_raw = zeile[titel_start:id_pos].strip(" ,:;.")
-            elif 'et al' in kopf.lower():
-                autoren_raw = kopf.split(',')[0] + ", et al."
-                titel_raw = kopf[len(autoren_raw):].strip(" ,:;.")
-            else:
-                # Ein Autor: Nachname, Vorname
-                autoren_raw = f"{teile[0].strip()}, {teile[1].strip()}"
-                titel_raw = ','.join(teile[2:]).strip(" ,:;.") if len(teile) > 2 else "unbekannter Titel"
+                        autoren.append(weiterer.strip())
 
-            autoren_raw = re.sub(r'\(.*?\)', '', autoren_raw).strip()
+                autoren_raw = "; ".join(autoren)
+                titel_raw = kopf_clean.replace(' und '.join(teile), '').strip(" ,:;")
+
+            else:
+                teile = [t.strip() for t in kopf_clean.split(',')]
+                if len(teile) >= 2:
+                    nachname = teile[0]
+                    vorname = teile[1]
+                    autoren_raw = f"{nachname}, {vorname}"
+                    titel_raw = ','.join(teile[2:]).strip(" ,:;")
+                else:
+                    continue  # Nicht parsebar
 
             if not titel_raw:
                 titel_raw = "unbekannter Titel"
@@ -102,6 +95,7 @@ def parse_einträge(zeilen):
             })
         except Exception:
             continue
+
     return einträge
 
 
