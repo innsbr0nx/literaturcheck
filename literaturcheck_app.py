@@ -26,70 +26,40 @@ import re
 
 def parse_einträge(zeilen):
     einträge = []
-
     for zeile in zeilen:
-        zeile = zeile.strip()
+        try:
+            doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
+            isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
 
-        # DOI oder ISBN extrahieren
-        doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
-        isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
+            if doi_match:
+                identifier = doi_match.group(1).strip()
+                id_typ = "doi"
 
-        if doi_match:
-            identifier = doi_match.group(1).strip()
-            id_typ = "DOI"
-        elif isbn_match:
-            identifier = isbn_match.group(1).replace('-', '').strip()
-            id_typ = "ISBN"
-        else:
-            # Wenn weder DOI noch ISBN vorhanden, skip
-            continue
+            elif isbn_match:
+                identifier = normalize_isbn(isbn_match.group(1))
+                id_typ = "isbn"
 
-        # Entferne den DOI/ISBN-Teil aus der Zeile
-        zeile_clean = re.sub(r'\[DOI:.*?\]|\[ISBN:.*?\]', '', zeile).strip()
-
-        # (Hrsg.) und et al. entfernen
-        zeile_clean = re.sub(r'\(Hrsg\.?\)', '', zeile_clean)
-        zeile_clean = zeile_clean.replace('et al.', '').strip()
-
-        # Zerlege in Autorenteil und Titelteil: Autoren sind vor dem ersten Komma, Titel nach dem ersten Komma
-        teile = zeile_clean.split(',', 1)
-        if len(teile) < 2:
-            continue
-
-        autor_teil = teile[0].strip()
-        titel_teil = teile[1].strip()
-
-        # Autoren ggf. nach "und" oder ";" aufteilen
-        autoren_raw = re.split(r'\s+und\s+|;', autor_teil)
-        autoren = []
-        for autor in autoren_raw:
-            autor = autor.strip()
-            if not autor:
-                continue
-            # Wenn schon Nachname, Vorname: so lassen, sonst umwandeln
-            if ',' in autor:
-                autoren.append(autor)
             else:
-                parts = autor.split()
-                if len(parts) > 1:
-                    nachname = parts[-1]
-                    vorname = ' '.join(parts[:-1])
-                    autoren.append(f"{nachname}, {vorname}")
-                else:
-                    autoren.append(autor)
+                continue
 
-        autor_str = "; ".join(autoren)
+            autor_teil = zeile.split(',')[0].strip()
+            autor_teil = re.sub(r"\(Hrsg\.\)", "", autor_teil, flags=re.IGNORECASE)
+            autor_teil = re.sub(r"et al\.?", "", autor_teil, flags=re.IGNORECASE)
+            autor = autor_teil.strip()
 
-        einträge.append({
-            'typ': id_typ,
-            'id': identifier,
-            'autor': autor_str,
-            'titel': titel_teil
-        })
+            teile = zeile.split(',')
+            titel = teile[2].strip() if len(teile) >= 3 else "unbekannter Titel"
 
+            einträge.append({
+                'typ': id_typ,
+                'id': identifier,
+                'titel': titel,
+                'autor': autor
+            })
+
+        except Exception:
+            continue
     return einträge
-
-
 
 # ===============================
 # ISBN Normalisierung & Varianten
