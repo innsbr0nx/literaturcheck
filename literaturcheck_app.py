@@ -440,7 +440,7 @@ def überprüfe(einträge, langsame_quellen=False):
 
 def main():
     st.title("Litcheck Historia.Scribere BETA")
-    st.caption("Prüft DOIs und ISBNs gegen mehrere Datenbanken (mit Fallback auf Titelsuche).")
+    st.caption("Prüft DOIs und ISBNs gegen mehrere Datenbanken (mit Fallback auf Titelsuche). Erkennt derzeit nur Monographien und Sammelbände einigermaßen zuverlässig. Achtung: viele False Negatives!")
 
     langsame = st.checkbox("Auch langsame Quellen (WorldCat, DNB, ZDB) einbeziehen", value=False)
     datei = st.file_uploader("Lade Bibliographie (.txt oder .docx) hoch", type=["txt", "docx"])
