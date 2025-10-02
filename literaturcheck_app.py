@@ -27,73 +27,67 @@ import re
 def parse_einträge(zeilen):
     einträge = []
 
-    for zeile in zeilen:
-        try:
-            # Suche DOI oder ISBN
-            doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
-            isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
+    for zeile in lines:
+        zeile = zeile.strip()
 
-            if doi_match:
-                identifier = doi_match.group(1).strip()
-                id_typ = "doi"
-                zeile_clean = zeile.replace(doi_match.group(0), '').strip()
-            elif isbn_match:
-                identifier = normalize_isbn(isbn_match.group(1))
-                id_typ = "isbn"
-                zeile_clean = zeile.replace(isbn_match.group(0), '').strip()
-            else:
-                # kein Identifier -> überspringen
-                continue
+        # DOI oder ISBN extrahieren
+        doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
+        isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
 
-            # Entferne (Hrsg.) und et al. vor Autorenauswertung
-            zeile_clean = re.sub(r'\(Hrsg\.?\)', '', zeile_clean, flags=re.IGNORECASE)
-            zeile_clean = re.sub(r'\bet al\.?', '', zeile_clean, flags=re.IGNORECASE)
-
-            # Teile bei letztem Komma:
-            letzte_komma = zeile_clean.rfind(',')
-            if letzte_komma == -1:
-                autorenteil = zeile_clean
-                rest = ''
-            else:
-                autorenteil = zeile_clean[:letzte_komma].strip()
-                rest = zeile_clean[letzte_komma+1:].strip()
-
-            # Autorenteil aufteilen mit ' und '
-            autoren = []
-            for teil in autorenteil.split(' und '):
-                autoren.append(teil.strip())
-
-            # Autorennamen formatieren (Nachname, Vorname)
-            autoren_final = []
-            for autor in autoren:
-                if ',' in autor:
-                    autoren_final.append(autor)
-                else:
-                    parts = autor.split()
-                    if len(parts) >= 2:
-                        nachname = parts[-1]
-                        vorname = ' '.join(parts[:-1])
-                        autoren_final.append(f"{nachname}, {vorname}")
-                    else:
-                        autoren_final.append(autor)
-
-            autor_str = "; ".join(autoren_final)
-
-            # Titel aus rest, alles vor erstem Komma
-            titel = rest.split(',')[0].strip() if rest else "unbekannter Titel"
-
-            einträge.append({
-                'typ': id_typ,
-                'id': identifier,
-                'titel': titel,
-                'autor': autor_str
-            })
-
-        except Exception:
+        if doi_match:
+            identifier = doi_match.group(1).strip()
+            id_typ = "DOI"
+        elif isbn_match:
+            identifier = isbn_match.group(1).replace('-', '').strip()
+            id_typ = "ISBN"
+        else:
+            # Wenn weder DOI noch ISBN vorhanden, skip
             continue
 
-    return einträge
+        # Entferne den DOI/ISBN-Teil aus der Zeile
+        zeile_clean = re.sub(r'\[DOI:.*?\]|\[ISBN:.*?\]', '', zeile).strip()
 
+        # (Hrsg.) und et al. entfernen
+        zeile_clean = re.sub(r'\(Hrsg\.?\)', '', zeile_clean)
+        zeile_clean = zeile_clean.replace('et al.', '').strip()
+
+        # Zerlege in Autorenteil und Titelteil: Autoren sind vor dem ersten Komma, Titel nach dem ersten Komma
+        teile = zeile_clean.split(',', 1)
+        if len(teile) < 2:
+            continue
+
+        autor_teil = teile[0].strip()
+        titel_teil = teile[1].strip()
+
+        # Autoren ggf. nach "und" oder ";" aufteilen
+        autoren_raw = re.split(r'\s+und\s+|;', autor_teil)
+        autoren = []
+        for autor in autoren_raw:
+            autor = autor.strip()
+            if not autor:
+                continue
+            # Wenn schon Nachname, Vorname: so lassen, sonst umwandeln
+            if ',' in autor:
+                autoren.append(autor)
+            else:
+                parts = autor.split()
+                if len(parts) > 1:
+                    nachname = parts[-1]
+                    vorname = ' '.join(parts[:-1])
+                    autoren.append(f"{nachname}, {vorname}")
+                else:
+                    autoren.append(autor)
+
+        autor_str = "; ".join(autoren)
+
+        einträge.append({
+            'typ': id_typ,
+            'id': identifier,
+            'autor': autor_str,
+            'titel': titel_teil
+        })
+
+    return einträge
 
 
 
