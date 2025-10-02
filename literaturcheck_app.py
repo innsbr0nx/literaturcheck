@@ -24,79 +24,79 @@ def lade_datei(datei):
 
 def parse_einträge(zeilen):
     einträge = []
+
     for zeile in zeilen:
         try:
-            # DOI oder ISBN erkennen
+            # === 1. Identifier (DOI oder ISBN) extrahieren ===
             doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
             isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
 
             if doi_match:
                 identifier = doi_match.group(1).strip()
                 id_typ = "doi"
-                id_pos = doi_match.start()
+                zeile_clean = zeile.replace(doi_match.group(0), '').strip()
             elif isbn_match:
                 identifier = normalize_isbn(isbn_match.group(1))
                 id_typ = "isbn"
-                id_pos = isbn_match.start()
+                zeile_clean = zeile.replace(isbn_match.group(0), '').strip()
             else:
-                continue  # Kein DOI/ISBN → überspringen
+                continue  # Kein DOI/ISBN gefunden
 
-            # Den Teil vor DOI/ISBN extrahieren
-            kopf = zeile[:id_pos].strip().rstrip(",.;")
+            # === 2. Et al., Hrsg., etc. entfernen ===
+            zeile_clean = re.sub(r'\bet al\.?', '', zeile_clean, flags=re.IGNORECASE)
+            zeile_clean = re.sub(r'\(Hrsg\.?\)', '', zeile_clean, flags=re.IGNORECASE)
 
-            # === AUTOR:INNEN ===
-            # Entferne (Hrsg.) oder (Ed.)
-            kopf_clean = re.sub(r'\(.*?\)', '', kopf)
+            # === 3. Autorenteil: alles vor dem ersten Punkt oder dem ersten Titel-Wort (heuristisch) ===
+            autoren_raw = zeile_clean.split(",")[0]
+            rest = zeile_clean[len(autoren_raw):].strip(", ")
 
-            # Entferne et al.
-            kopf_clean = re.sub(r'\bet al\.?\b', '', kopf_clean, flags=re.IGNORECASE).strip()
+            # === 4. Weitere Autoren extrahieren ===
+            if ' und ' in autoren_raw:
+                autoren_teile = autoren_raw.split(' und ')
+            else:
+                autoren_teile = [autoren_raw]
 
-            autoren_raw = ""
-            titel_raw = ""
-
-            # Mehrere Autoren mit "und"
-            if ' und ' in kopf_clean:
-                teile = kopf_clean.split(' und ')
-                autoren = []
-
-                # Ersten Autor im Format „Nachname, Vorname“ lassen
-                autoren.append(teile[0].strip())
-
-                for weiterer in teile[1:]:
-                    parts = weiterer.strip().split()
+            autoren = []
+            for autor in autoren_teile:
+                autor = autor.strip()
+                if ',' not in autor:
+                    # Vorname Nachname → drehen
+                    parts = autor.split()
                     if len(parts) >= 2:
                         nachname = parts[-1]
                         vorname = ' '.join(parts[:-1])
                         autoren.append(f"{nachname}, {vorname}")
                     else:
-                        autoren.append(weiterer.strip())
-
-                autoren_raw = "; ".join(autoren)
-                titel_raw = kopf_clean.replace(' und '.join(teile), '').strip(" ,:;")
-
-            else:
-                teile = [t.strip() for t in kopf_clean.split(',')]
-                if len(teile) >= 2:
-                    nachname = teile[0]
-                    vorname = teile[1]
-                    autoren_raw = f"{nachname}, {vorname}"
-                    titel_raw = ','.join(teile[2:]).strip(" ,:;")
+                        autoren.append(autor)
                 else:
-                    continue  # Nicht parsebar
+                    autoren.append(autor)
 
-            if not titel_raw:
-                titel_raw = "unbekannter Titel"
+            autor_str = "; ".join(autoren)
+
+            # === 5. Titel heuristisch ermitteln ===
+            # Versuche: alles zwischen Autoren und dem ersten Ort: Jahr, oder Verlag
+            # oder einfach alles nach dem Autorenteil
+            restteile = rest.split(',')
+            titel_kandidaten = [teil.strip() for teil in restteile if not re.search(r'\b\d{4}\b', teil) and not re.search(r':', teil)]
+            titel = ', '.join(titel_kandidaten).strip()
+
+            if not titel:
+                titel = "unbekannter Titel"
 
             einträge.append({
                 'typ': id_typ,
                 'id': identifier,
-                'titel': titel_raw,
-                'autor': autoren_raw
+                'titel': titel,
+                'autor': autor_str
             })
-        except Exception:
+
+        except Exception as e:
+            # Debugging optional:
+            # print(f"Fehler beim Parsen der Zeile: {zeile}\n{e}")
             continue
 
     return einträge
+
 
 
 # ===============================
