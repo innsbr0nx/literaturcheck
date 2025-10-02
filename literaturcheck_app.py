@@ -22,12 +22,14 @@ def lade_datei(datei):
         return []
     return zeilen
 
+import re
+
 def parse_einträge(zeilen):
     einträge = []
 
     for zeile in zeilen:
         try:
-            # === 1. Identifier (DOI oder ISBN) extrahieren ===
+            # Suche DOI oder ISBN
             doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
             isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
 
@@ -40,48 +42,45 @@ def parse_einträge(zeilen):
                 id_typ = "isbn"
                 zeile_clean = zeile.replace(isbn_match.group(0), '').strip()
             else:
-                continue  # Kein DOI/ISBN gefunden
+                # kein Identifier -> überspringen
+                continue
 
-            # === 2. Et al., Hrsg., etc. entfernen ===
-            zeile_clean = re.sub(r'\bet al\.?', '', zeile_clean, flags=re.IGNORECASE)
+            # Entferne (Hrsg.) und et al. vor Autorenauswertung
             zeile_clean = re.sub(r'\(Hrsg\.?\)', '', zeile_clean, flags=re.IGNORECASE)
+            zeile_clean = re.sub(r'\bet al\.?', '', zeile_clean, flags=re.IGNORECASE)
 
-            # === 3. Autorenteil: alles vor dem ersten Punkt oder dem ersten Titel-Wort (heuristisch) ===
-            autoren_raw = zeile_clean.split(",")[0]
-            rest = zeile_clean[len(autoren_raw):].strip(", ")
-
-            # === 4. Weitere Autoren extrahieren ===
-            if ' und ' in autoren_raw:
-                autoren_teile = autoren_raw.split(' und ')
+            # Teile bei letztem Komma:
+            letzte_komma = zeile_clean.rfind(',')
+            if letzte_komma == -1:
+                autorenteil = zeile_clean
+                rest = ''
             else:
-                autoren_teile = [autoren_raw]
+                autorenteil = zeile_clean[:letzte_komma].strip()
+                rest = zeile_clean[letzte_komma+1:].strip()
 
+            # Autorenteil aufteilen mit ' und '
             autoren = []
-            for autor in autoren_teile:
-                autor = autor.strip()
-                if ',' not in autor:
-                    # Vorname Nachname → drehen
+            for teil in autorenteil.split(' und '):
+                autoren.append(teil.strip())
+
+            # Autorennamen formatieren (Nachname, Vorname)
+            autoren_final = []
+            for autor in autoren:
+                if ',' in autor:
+                    autoren_final.append(autor)
+                else:
                     parts = autor.split()
                     if len(parts) >= 2:
                         nachname = parts[-1]
                         vorname = ' '.join(parts[:-1])
-                        autoren.append(f"{nachname}, {vorname}")
+                        autoren_final.append(f"{nachname}, {vorname}")
                     else:
-                        autoren.append(autor)
-                else:
-                    autoren.append(autor)
+                        autoren_final.append(autor)
 
-            autor_str = "; ".join(autoren)
+            autor_str = "; ".join(autoren_final)
 
-            # === 5. Titel heuristisch ermitteln ===
-            # Versuche: alles zwischen Autoren und dem ersten Ort: Jahr, oder Verlag
-            # oder einfach alles nach dem Autorenteil
-            restteile = rest.split(',')
-            titel_kandidaten = [teil.strip() for teil in restteile if not re.search(r'\b\d{4}\b', teil) and not re.search(r':', teil)]
-            titel = ', '.join(titel_kandidaten).strip()
-
-            if not titel:
-                titel = "unbekannter Titel"
+            # Titel aus rest, alles vor erstem Komma
+            titel = rest.split(',')[0].strip() if rest else "unbekannter Titel"
 
             einträge.append({
                 'typ': id_typ,
@@ -90,12 +89,11 @@ def parse_einträge(zeilen):
                 'autor': autor_str
             })
 
-        except Exception as e:
-            # Debugging optional:
-            # print(f"Fehler beim Parsen der Zeile: {zeile}\n{e}")
+        except Exception:
             continue
 
     return einträge
+
 
 
 
