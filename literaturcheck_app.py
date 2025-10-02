@@ -28,7 +28,7 @@ def parse_einträge(zeilen):
     for zeile in zeilen:
         try:
             doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
-            isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
+            isbn_match = re.search(r'\[ISBN:\s*([\d\-Xx]+)\]', zeile)
 
             if doi_match:
                 identifier = doi_match.group(1).strip()
@@ -39,23 +39,29 @@ def parse_einträge(zeilen):
             else:
                 continue
 
-            autor_teil = zeile.split(',')[0].strip()
-            autor_teil = re.sub(r"\(Hrsg\.\)", "", autor_teil, flags=re.IGNORECASE)
-            autor_teil = re.sub(r"et al\.?", "", autor_teil, flags=re.IGNORECASE)
-            autor = autor_teil.strip()
+            teile = [t.strip() for t in zeile.split(',')]
+            autor_teil = teile[0]
 
-            teile = zeile.split(',')
+            # Wenn der zweite Teil mit 'und' existiert, erweitere den autor_teil
+            if len(teile) > 1:
+                # Hole alles vor dem Titel (angenommen Titel ist ab dem 3. Komma)
+                autor_teil = ",".join(teile[:2])  # falls nur zwei Teile
+
+            autoren = parse_autoren(autor_teil)
+
             titel = teile[2].strip() if len(teile) >= 3 else "unbekannter Titel"
 
             einträge.append({
                 'typ': id_typ,
                 'id': identifier,
                 'titel': titel,
-                'autor': autor
+                'autor': ", ".join(autoren)
             })
-        except Exception:
+        except Exception as e:
+            # Optional: Fehler ausgeben
             continue
     return einträge
+
 
 
 # ===============================
