@@ -154,7 +154,7 @@ def get_metadata_googlebooks(isbn):
 
 def get_metadata_worldcat_sru(isbn):
     try:
-        url = f"https://worldcat.org/webservices/catalog/search/sru?version=1.2&operation=searchRetrieve&query=isbn={isbn}&maximumRecords=1"
+        url = f"https://worldcat.org/webservices/catalog/search/sru?version=1.2&operation=searchRetrieve&query=isbn={isbn}&Records=1"
         headers = {"Accept": "application/xml"}
         r = requests.get(url, headers=headers, timeout=8)
         tree = etree.fromstring(r.content)
@@ -260,7 +260,7 @@ def parse_marcxml_records(xml_content, quelle):
 def query_dnb(isbn=None, titel=None):
     """Fragt die DNB per SRU ab – zuerst ISBN, dann Titel."""
     base = "https://services.dnb.de/sru/dnb"
-    params = {"version": "1.1", "operation": "searchRetrieve", "maximumRecords": "5", "recordSchema": "MARC21-xml"}
+    params = {"version": "1.1", "operation": "searchRetrieve", "maximumRecords": "10", "recordSchema": "MARC21-xml"}
 
     # Erst ISBN
     if isbn:
@@ -287,7 +287,7 @@ def query_dnb(isbn=None, titel=None):
 def query_zdb(isbn=None, titel=None):
     """Fragt die ZDB per SRU ab – zuerst ISBN, dann Titel."""
     base = "https://services.dnb.de/sru/zdb"
-    params = {"version": "1.1", "operation": "searchRetrieve", "maximumRecords": "5", "recordSchema": "MARC21-xml"}
+    params = {"version": "1.1", "operation": "searchRetrieve", "maximumRecords": "10", "recordSchema": "MARC21-xml"}
 
     if isbn:
         params["query"] = f"pica.isb={isbn}"
