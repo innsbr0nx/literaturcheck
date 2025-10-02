@@ -170,7 +170,57 @@ def get_metadata_worldcat_sru(isbn):
         return {"quelle": "WorldCat", "titel": titel or "", "autoren": autoren}
     except:
         return None
-        
+
+def query_isbn_sources(isbn, titel=None, langsame=False):
+    results = []
+
+    # 1) ISBN-Varianten abfragen
+    for variant in generate_isbn_variants(isbn):
+        for func in [get_metadata_googlebooks, get_metadata_openlibrary]:
+            try:
+                md = func(variant)
+                if md:
+                    md["isbn_variant"] = variant
+                    results.append(md)
+            except:
+                continue
+
+        if langsame:
+            try:
+                md = get_metadata_worldcat_sru(variant)
+                if md:
+                    md["isbn_variant"] = variant
+                    results.append(md)
+            except:
+                continue
+
+    # 2) DNB/ZDB (ISBN → Fallback Titel)
+    if langsame:
+        try:
+            dnb = get_metadata_dnb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
+            if dnb:
+                results.append(dnb)
+        except:
+            pass
+        try:
+            zdb = get_metadata_zdb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
+            if zdb:
+                results.append(zdb)
+        except:
+            pass
+
+    # 3) Falls noch nichts gefunden → reine Titelsuche (langsamer)
+    if not results and titel and langsame:
+        for func in [get_metadata_dnb, get_metadata_zdb]:
+            try:
+                md = func({"id": None, "typ": "titel", "titel": titel, "autor": ""})
+                if md:
+                    results.append(md)
+            except:
+                continue
+
+    return results
+
 # ===============================
 # DNB & ZDB SRU-Schnittstellen
 # ===============================
@@ -326,58 +376,6 @@ def vergleiche(eintrag, metadata):
         "autor_match": autor_match,
         "autoren_api": metadata.get("autoren", []),
     }
-
-
-
-def query_isbn_sources(isbn, titel=None, langsame=False):
-    results = []
-
-    # 1) ISBN-Varianten abfragen
-    for variant in generate_isbn_variants(isbn):
-        for func in [get_metadata_googlebooks, get_metadata_openlibrary]:
-            try:
-                md = func(variant)
-                if md:
-                    md["isbn_variant"] = variant
-                    results.append(md)
-            except:
-                continue
-
-        if langsame:
-            try:
-                md = get_metadata_worldcat_sru(variant)
-                if md:
-                    md["isbn_variant"] = variant
-                    results.append(md)
-            except:
-                continue
-
-    # 2) DNB/ZDB (ISBN → Fallback Titel)
-    if langsame:
-        try:
-            dnb = get_metadata_dnb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
-            if dnb:
-                results.append(dnb)
-        except:
-            pass
-        try:
-            zdb = get_metadata_zdb({"id": isbn, "typ": "isbn", "titel": titel, "autor": ""})
-            if zdb:
-                results.append(zdb)
-        except:
-            pass
-
-    # 3) Falls noch nichts gefunden → reine Titelsuche (langsamer)
-    if not results and titel and langsame:
-        for func in [get_metadata_dnb, get_metadata_zdb]:
-            try:
-                md = func({"id": None, "typ": "titel", "titel": titel, "autor": ""})
-                if md:
-                    results.append(md)
-            except:
-                continue
-
-    return results
 
 
 # ===============================
