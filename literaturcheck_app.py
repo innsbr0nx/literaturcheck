@@ -26,46 +26,50 @@ def parse_einträge(zeilen):
     einträge = []
     for zeile in zeilen:
         try:
+            # DOI oder ISBN erkennen
             doi_match = re.search(r'\[DOI:\s*(10\.\S+?)\]', zeile)
             isbn_match = re.search(r'\[ISBN:\s*([\d\-]+)\]', zeile)
 
             if doi_match:
                 identifier = doi_match.group(1).strip()
                 id_typ = "doi"
+                id_pos = doi_match.start()
             elif isbn_match:
                 identifier = normalize_isbn(isbn_match.group(1))
                 id_typ = "isbn"
+                id_pos = isbn_match.start()
             else:
-                continue
+                continue  # Kein DOI/ISBN → überspringen
 
-            # Autor: nehme die ersten zwei "Komma-getrennten" Teile als Nachname + Vorname
-            teile = zeile.split(',')
+            # Bereich vor DOI/ISBN extrahieren (Autor:innen + Titel)
+            kopf = zeile[:id_pos].strip().rstrip(",.;:")
+
+            # ===========================
+            # AUTOR:INNEN EXTRAKTION
+            # ===========================
+            autoren_raw = ""
+            titel_raw = ""
+
+            # Splitte bei erstem Vorkommen von drei Teilen mit Komma → „Nachname, Vorname, Titel…“
+            teile = kopf.split(',')
             if len(teile) < 2:
-                continue  # keine gültige Struktur
-            
-            erster_autor_nachname = teile[0].strip()
-            erster_autor_vorname = teile[1].strip()
+                continue  # Ungültige Struktur
 
-            # Jetzt prüfen, ob mehrere Autoren mit 'und' oder 'et al.' in diesem ersten Teil vorkommen
-            autor_teil = f"{erster_autor_nachname}, {erster_autor_vorname}"
+            # Prüfe, ob "und" in den ersten zwei Teilen vorkommt → mehrere Autor:innen
+            autoren_teil = ','.join(teile[:2])
+            rest = ','.join(teile[2:]) if len(teile) > 2 else ""
 
-            # Suche nach 'und' oder 'et al.' in der Zeile vor dem DOI/ISBN
-            autoren_ende_index = zeile.find('[') if '[' in zeile else len(zeile)
-            autoren_text = zeile[:autoren_ende_index]
-
-            # Nach 'und' suchen für weitere Autoren
-            if ' und ' in autoren_text:
-                # Beispiel: "Neuburger, Tobias und Nikolaus Hagen (Hrsg.)"
-                teile_autoren = autoren_text.split(' und ')
+            if ' und ' in kopf:
+                # Beispiel: "Nachname, Vorname und Vorname Nachname (Hrsg.)"
+                autoren_split = kopf.split(' und ')
                 autoren = []
 
-                # Erster Autor bleibt im Nachname, Vorname Format
-                autoren.append(teile_autoren[0].strip())
+                # Erster Autor in „Nachname, Vorname“ → lassen
+                autoren.append(autoren_split[0].strip())
 
-                # Für weitere Autoren: "Nikolaus Hagen (Hrsg.)" etc.
-                for weiterer in teile_autoren[1:]:
-                    weiterer = re.sub(r'\(Hrsg\.\)', '', weiterer).strip()
-                    # Wenn "Vorname Nachname" dann drehen
+                # Weitere Autor:innen in „Vorname Nachname“ → umdrehen
+                for weiterer in autoren_split[1:]:
+                    weiterer = re.sub(r'\(.*?\)', '', weiterer).strip()
                     parts = weiterer.split()
                     if len(parts) >= 2:
                         nachname = parts[-1]
@@ -73,30 +77,32 @@ def parse_einträge(zeilen):
                         autoren.append(f"{nachname}, {vorname}")
                     else:
                         autoren.append(weiterer)
-                autor_teil = "; ".join(autoren)
+                autoren_raw = "; ".join(autoren)
+                # Titel = Teil nach dem letzten Autor
+                titel_start = zeile.find(autoren_split[-1]) + len(autoren_split[-1])
+                titel_raw = zeile[titel_start:id_pos].strip(" ,:;.")
+            elif 'et al' in kopf.lower():
+                autoren_raw = kopf.split(',')[0] + ", et al."
+                titel_raw = kopf[len(autoren_raw):].strip(" ,:;.")
+            else:
+                # Ein Autor: Nachname, Vorname
+                autoren_raw = f"{teile[0].strip()}, {teile[1].strip()}"
+                titel_raw = ','.join(teile[2:]).strip(" ,:;.") if len(teile) > 2 else "unbekannter Titel"
 
-            # Wenn 'et al.' in autoren_text, einfach lassen (z.B. "Oberbichler, Sarah et al.")
-            elif 'et al.' in autoren_text.lower():
-                autor_teil = autoren_text.strip()
+            autoren_raw = re.sub(r'\(.*?\)', '', autoren_raw).strip()
 
-            # Titel: alles zwischen dem zweiten Komma und dem DOI/ISBN
-            titel_start = zeile.find(',', zeile.find(',') + 1) + 1
-            titel_ende = autoren_ende_index
-            titel = zeile[titel_start:titel_ende].strip(' ,')
-
-            if not titel:
-                titel = "unbekannter Titel"
+            if not titel_raw:
+                titel_raw = "unbekannter Titel"
 
             einträge.append({
                 'typ': id_typ,
                 'id': identifier,
-                'titel': titel,
-                'autor': autor_teil
+                'titel': titel_raw,
+                'autor': autoren_raw
             })
         except Exception:
             continue
     return einträge
-
 
 
 # ===============================
