@@ -80,14 +80,19 @@ def isbn10_to_isbn13(isbn10: str) -> str:
 def generate_isbn_variants(isbn: str) -> list:
     variants = set()
     clean = re.sub(r"[^0-9Xx]", "", isbn)
-    variants.add(clean)
+    variants.add(clean.upper())  # ISBN Großbuchstaben für X normalisieren
+    
+    # Variante mit Bindestrichen entfernen, nur wenn es nicht schon clean ist
+    isbn_no_dash = isbn.replace("-", "").upper()
+    if isbn_no_dash != clean.upper():
+        variants.add(isbn_no_dash)
+    
     if len(clean) == 10:
         variants.add(isbn10_to_isbn13(clean))
     if len(clean) == 13 and clean.startswith("978"):
         core = clean[3:-1]
         variants.add(core)
     return list(variants)
-
 
 # ===============================
 # DOI-Quellen
@@ -173,9 +178,21 @@ def get_metadata_worldcat_sru(isbn):
 
 def query_isbn_sources(isbn, titel=None, langsame=False):
     results = []
-
-    # 1) ISBN-Varianten abfragen
-    for variant in generate_isbn_variants(isbn):
+    variants = generate_isbn_variants(isbn)
+    
+    # Für jede Variante auch die mit Bindestrichen abfragen
+    extended_variants = set(variants)
+    for v in variants:
+        if '-' not in v and len(v) in [10,13]:  # nur wenn noch keine Bindestriche
+            # Bindestriche z.B. an gängige Positionen einfügen (sehr rudimentär)
+            if len(v) == 13:
+                # z.B. 978-xxx-xxxxxx-x
+                extended_variants.add(f"{v[:3]}-{v[3:4]}-{v[4:12]}-{v[12:]}")
+            elif len(v) == 10:
+                # z.B. x-xxx-xxxxx-x
+                extended_variants.add(f"{v[0]}-{v[1:4]}-{v[4:9]}-{v[9]}")
+    
+    for variant in extended_variants:
         for func in [get_metadata_googlebooks, get_metadata_openlibrary]:
             try:
                 md = func(variant)
@@ -193,6 +210,7 @@ def query_isbn_sources(isbn, titel=None, langsame=False):
                     results.append(md)
             except:
                 continue
+
 
     # 2) DNB/ZDB (ISBN → Fallback Titel)
     if langsame:
