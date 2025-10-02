@@ -27,7 +27,7 @@ import re
 def parse_einträge(zeilen):
     einträge = []
 
-    for zeile in lines:
+    for zeile in zeilen:
         zeile = zeile.strip()
 
         # DOI oder ISBN extrahieren
