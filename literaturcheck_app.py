@@ -400,7 +400,7 @@ def überprüfe(einträge, langsame_quellen=False):
     beste_ergebnisse = []
 
     for eintrag in einträge:
-        st.caption(f"### 🔍 {eintrag['titel']} ({eintrag['autor']})")
+        st.markdown(f"### 🔍 {eintrag['titel']} ({eintrag['autor']})")
 
         if eintrag["typ"] == "doi":
             quellen = [get_metadata_crossref, get_metadata_doi_rest]
